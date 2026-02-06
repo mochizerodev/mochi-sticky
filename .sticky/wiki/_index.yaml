@@ -31,8 +31,8 @@ sections:
       slug: reference
       order: 0
       pages:
-        - schema
         - config
+        - schema
         - tasks
         - boards
         - wiki-schema
@@ -45,6 +45,7 @@ sections:
       slug: release
       order: 0
       pages:
+        - preparing-a-release
         - versioning
         - distribution
         - release-notes-template
@@ -66,3 +67,4 @@ sections:
         - tui
         - wiki
         - mcp
+        - use-cases
