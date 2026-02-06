@@ -42,7 +42,7 @@ jobs:
           COMMIT="${{ github.sha }}"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           LD_FLAGS="-X mochi-sticky/internal/version.Version=${VERSION} -X mochi-sticky/internal/version.Commit=${COMMIT} -X mochi-sticky/internal/version.Date=${BUILD_DATE}"
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "${LD_FLAGS}" -o "dist/${BIN_NAME}" ./...
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "${LD_FLAGS}" -o "dist/${BIN_NAME}" .
 
       - name: Generate release notes
         run: |
