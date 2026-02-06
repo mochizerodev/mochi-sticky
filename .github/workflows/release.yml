@@ -25,7 +25,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.23.x"
+          go-version-file: go.mod
+          check-latest: true
           cache: true
 
       - name: Test
@@ -42,7 +43,7 @@ jobs:
           COMMIT="${{ github.sha }}"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           LD_FLAGS="-X mochi-sticky/internal/version.Version=${VERSION} -X mochi-sticky/internal/version.Commit=${COMMIT} -X mochi-sticky/internal/version.Date=${BUILD_DATE}"
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "${LD_FLAGS}" -o "dist/${BIN_NAME}" ./...
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "${LD_FLAGS}" -o "dist/${BIN_NAME}" .
 
       - name: Generate release notes
         run: |
@@ -99,7 +100,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.23.x"
+          go-version-file: go.mod
+          check-latest: true
           cache: true
 
       - name: Build (native, unix)

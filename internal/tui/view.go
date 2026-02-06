@@ -203,7 +203,7 @@ func (m Model) renderBoardScreen(helpOverride string) string {
 	}
 
 	board := lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
-	kanbanStyleSized := kanbanStyle.Copy()
+	kanbanStyleSized := kanbanStyle
 	if availableWidth > 0 {
 		kanbanStyleSized = kanbanStyleSized.Width(availableWidth)
 	}
@@ -297,7 +297,7 @@ func (m Model) renderColumn(column columnModel, active bool, width int, isLast b
 		}
 	}
 
-	style := columnBorder.Copy().Width(width)
+	style := columnBorder.Width(width)
 	if height > 0 {
 		contentHeight := max(0, height-2)
 		if contentHeight > 0 {
@@ -329,7 +329,7 @@ func (m Model) renderBoardInfoBox(width int) string {
 		lines = []string{taskStyle.Render("(empty)")}
 	}
 	body := fmt.Sprintf("%s\n%s", headerStyle.Render("Board Info"), strings.Join(lines, "\n"))
-	style := infoBoxStyle.Copy()
+	style := infoBoxStyle
 	if width > 0 {
 		style = style.Width(width)
 	}
@@ -380,7 +380,7 @@ func (m Model) renderBoardSidebar(width, height int) string {
 		}
 	}
 	body := strings.Join(lines, "\n")
-	style := sidebarStyle.Copy().Width(width)
+	style := sidebarStyle.Width(width)
 	if height > 0 {
 		contentHeight := max(0, height-2)
 		if contentHeight > 0 {
@@ -763,8 +763,8 @@ func (m Model) renderWikiLayout(header, help string) string {
 		rightWidth = 0
 	}
 
-	infoBox := infoBoxStyle.Copy().Width(rightWidth).Render(infoContent)
-	contentBox := kanbanStyle.Copy().Width(rightWidth).Render(pageContent)
+	infoBox := infoBoxStyle.Width(rightWidth).Render(infoContent)
+	contentBox := kanbanStyle.Width(rightWidth).Render(pageContent)
 	rightPanel := strings.Join([]string{infoBox, "", contentBox}, "\n")
 
 	availableHeight := m.bodyHeight(header, help)
@@ -780,7 +780,7 @@ func (m Model) renderWikiLayout(header, help string) string {
 		}
 		navText = padToHeight(clampToHeight(navText, navContentHeight), navContentHeight)
 	}
-	navPanel := sidebarStyle.Copy().Width(navWidth).Render(navText)
+	navPanel := sidebarStyle.Width(navWidth).Render(navText)
 
 	separator := strings.Repeat(" ", gap)
 	return lipgloss.JoinHorizontal(lipgloss.Top, navPanel, separator, rightPanel)
