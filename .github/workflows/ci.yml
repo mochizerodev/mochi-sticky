@@ -41,7 +41,7 @@ jobs:
           args: --timeout=5m
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-${{ matrix.os }}-go${{ matrix.go-version }}
           path: coverage.out
