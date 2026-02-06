@@ -56,7 +56,7 @@ jobs:
           changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
           lines = changelog.splitlines()
           
-          header_re = re.compile(r"^##\\s+\\[?(?P<tag>[^\\]]+)\\]?\\s*$")
+          header_re = re.compile(r"^##\s+\[?(?P<tag>[^\]]+)\]?\s*$")
           start = None
           end = None
           for idx, line in enumerate(lines):
