@@ -16,6 +16,10 @@
 > **Status: BETA (pre-1.0)**  
 > The CLI/TUI and file formats may change without notice. Please expect breaking changes until a `v1.0.0` release.
 
+## Support
+
+Enjoying `mochi-sticky`? Sponsor my work (coffee appreciated): [github.com/sponsors/mochizerodev](https://github.com/sponsors/mochizerodev)
+
 ## Platform Support Matrix
 
 The project is currently only tested on Linux (CI). Other platforms may work, but are not guaranteed.
