@@ -18,7 +18,7 @@
 
 ## Support
 
-If `mochi-sticky` saves you time and you’d like to support ongoing development, you can sponsor me on GitHub: [github.com/sponsors/mochizerodev](https://github.com/sponsors/mochizerodev)
+If `mochi-sticky` is useful to you, consider sponsoring to help me keep it maintained, ship new features, and improve docs and releases. Sponsorship is the most direct way to fund ongoing work as a solo developer: [github.com/sponsors/mochizerodev](https://github.com/sponsors/mochizerodev)
 
 ## Platform Support Matrix
 
