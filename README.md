@@ -8,7 +8,7 @@
 > 
 > A file-based project management tool that lives in your Git repo. Manage tasks, boards, wiki documentation, and Architecture Decision Records — all in Markdown.
 
-[![Go Version](https://img.shields.io/badge/Go-1.23.12+-00ADD8?style=flat&logo=go)](https://go.dev)
+[![Go Version](https://img.shields.io/badge/Go-1.24.0+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![CI](https://github.com/mochizero0/mochi-sticky/actions/workflows/ci.yml/badge.svg)](https://github.com/mochizero0/mochi-sticky/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mochizero0/mochi-sticky)](https://goreportcard.com/report/github.com/mochizero0/mochi-sticky)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
