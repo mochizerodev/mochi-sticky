@@ -112,7 +112,7 @@ jobs:
           COMMIT="${{ github.sha }}"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           LD_FLAGS="-X mochi-sticky/internal/version.Version=${VERSION} -X mochi-sticky/internal/version.Commit=${COMMIT} -X mochi-sticky/internal/version.Date=${BUILD_DATE}"
-          go build -ldflags "${LD_FLAGS}" -o mochi-sticky ./...
+          go build -ldflags "${LD_FLAGS}" -o mochi-sticky .
 
       - name: Build (native, windows)
         if: runner.os == 'Windows'
@@ -122,7 +122,7 @@ jobs:
           $Commit = "${{ github.sha }}"
           $BuildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $LdFlags = "-X mochi-sticky/internal/version.Version=$Version -X mochi-sticky/internal/version.Commit=$Commit -X mochi-sticky/internal/version.Date=$BuildDate"
-          go build -ldflags "$LdFlags" -o mochi-sticky.exe ./...
+          go build -ldflags "$LdFlags" -o mochi-sticky.exe .
 
       - name: Smoke test --version (unix)
         if: runner.os != 'Windows'
