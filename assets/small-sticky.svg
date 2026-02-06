@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <clipPath id="sm-card-clip">
+       <path d="M6 10c0-3 3-6 6-6h32l10 10v38c0 3-3 6-6 6H12c-3 0-6-3-6-6V10z" />
+    </clipPath>
+  </defs>
+
+  <!-- Shadow -->
+  <path d="M10 16h32l10 10v32c0 4-3 5-6 5H14c-4 0-5-3-5-5V16" fill="#586069" opacity="0.6"/>
+
+  <!-- Body -->
+  <g clip-path="url(#sm-card-clip)">
+    <rect x="0" y="0" width="64" height="64" fill="#f6f8fa"/>
+    <rect x="0" y="14" width="64" height="6" fill="#f39c12"/>
+  </g>
+  
+  <path d="M6 10c0-3 3-6 6-6h32l10 10v38c0 3-3 6-6 6H12c-3 0-6-3-6-6V10z" fill="none" stroke="#d1d5da" stroke-width="1.5"/>
+
+  <!-- Fold -->
+  <path d="M44 4v10h10L44 4z" fill="#fff"/>
+  <path d="M44 4v10h10" fill="none" stroke="#d1d5da" stroke-width="1.5"/>
+
+  <!-- Vertical Mark (Dark/Black in reference, but keeping Orange for consistency if preferred, using Orange here based on 'missing he orange box') -->
+  <rect x="12" y="42" width="4" height="10" rx="1" fill="#f39c12"/>
+</svg>

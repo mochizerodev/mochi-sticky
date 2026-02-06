@@ -1,0 +1,5 @@
+storage_root: .sticky
+config_paths:
+  boards: boards/boards.yaml
+  adr: adrs/config.yaml
+  wiki_index: wiki/_index.yaml

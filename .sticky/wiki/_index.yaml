@@ -1,0 +1,68 @@
+index_version: 1
+sections:
+    - title: Home
+      slug: ""
+      order: 0
+      pages:
+        - home
+    - title: Development
+      slug: development
+      order: 0
+      pages:
+        - architecture
+        - contributing
+        - coding-standards
+        - testing
+        - architecture-diagrams
+    - title: Export
+      slug: export
+      order: 0
+      pages:
+        - markdown
+        - pdf
+        - multi-root
+    - title: Getting Started
+      slug: getting-started
+      order: 0
+      pages:
+        - install
+        - quickstart
+    - title: Reference
+      slug: reference
+      order: 0
+      pages:
+        - schema
+        - config
+        - tasks
+        - boards
+        - wiki-schema
+        - templates
+        - adr
+        - mcp
+        - task-template
+        - wiki-pdf-template
+    - title: Release
+      slug: release
+      order: 0
+      pages:
+        - versioning
+        - distribution
+        - release-notes-template
+    - title: Roadmap
+      slug: roadmap
+      order: 0
+      pages:
+        - roadmap-oss
+    - title: Troubleshooting
+      slug: troubleshooting
+      order: 0
+      pages:
+        - common-issues
+    - title: User Guide
+      slug: user-guide
+      order: 0
+      pages:
+        - cli
+        - tui
+        - wiki
+        - mcp

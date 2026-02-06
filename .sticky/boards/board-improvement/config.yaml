@@ -1,0 +1,16 @@
+config_version: 1
+next_id: 17
+columns:
+    - key: todo
+      title: Todo
+    - key: doing
+      title: Doing
+    - key: done
+      title: Done
+context:
+    scope: Capture owners, release targets, and release notes for the board-improvement effort.
+    owners:
+        - mochizero
+    release: Board Context v1
+    target: "2026-02-15"
+    notes: Use this block as the source of truth for release notes that span multiple tasks.

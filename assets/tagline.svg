@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 40" width="600" height="40">
+  <style>
+    .t { font-family: "Inter", Arial, sans-serif; font-size:14px; fill:#9b9b9b; }
+  </style>
+  <text x="0" y="24" class="t">Manage work, docs, and decisions — in your terminal.</text>
+</svg>

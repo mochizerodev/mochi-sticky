@@ -1,0 +1,22 @@
+active: default
+boards:
+    - id: default
+      name: Default
+      path: boards/default
+      archived: false
+      created: "2026-01-29"
+    - id: board-improvement
+      name: Board Improvement
+      path: boards/board-improvement
+      archived: false
+      created: "2026-01-30"
+    - id: wiki-improvement
+      name: Wiki Improvement
+      path: boards/wiki-improvement
+      archived: false
+      created: "2026-01-30"
+    - id: adr-improvement
+      name: ADR Improvement
+      path: boards/adr-improvement
+      archived: false
+      created: "2026-02-04"

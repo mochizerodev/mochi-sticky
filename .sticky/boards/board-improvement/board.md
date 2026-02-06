@@ -1,0 +1,3 @@
+- A board focused on enhancing the core experience (dependencies, CLI gaps, TUI refresh, metadata, config overrides, storage layout, board descriptions, readiness analytics, templates, detail visibility).
+- Each task captures goal/scope/acceptance plus progress summaries (e.g., storage root config and board-level description work completed).
+- Use it to plan infrastructure or workflow improvements that span MCP/CLI/TUI

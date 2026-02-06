@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 80" width="420" height="80">
+  <style>
+    .label { font-family: "Inter", Arial, sans-serif; font-size:24px; fill:#f39c12; font-weight:700; }
+    .sub { font-family: "Inter", Arial, sans-serif; font-size:14px; fill:#9b9b9b; }
+  </style>
+  <text x="8" y="32" class="label">vertical-sticky</text>
+  <text x="8" y="56" class="sub">Manage work, docs, and decisions — in your terminal.</text>
+</svg>

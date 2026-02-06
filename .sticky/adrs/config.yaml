@@ -1,0 +1,13 @@
+config_version: 1
+next_id: 2
+columns:
+    - key: proposed
+      title: Proposed
+    - key: accepted
+      title: Accepted
+    - key: rejected
+      title: Rejected
+    - key: deprecated
+      title: Deprecated
+    - key: superseded
+      title: Superseded

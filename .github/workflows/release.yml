@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build artifacts
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: |
+          mkdir -p dist
+          BIN_NAME="mochi-sticky-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BIN_NAME="${BIN_NAME}.exe"
+          fi
+          VERSION="${{ github.ref_name }}"
+          COMMIT="${{ github.sha }}"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LD_FLAGS="-X mochi-sticky/internal/version.Version=${VERSION} -X mochi-sticky/internal/version.Commit=${COMMIT} -X mochi-sticky/internal/version.Date=${BUILD_DATE}"
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "${LD_FLAGS}" -o "dist/${BIN_NAME}" ./...
+
+      - name: Generate release notes
+        run: |
+          TAG="${{ github.ref_name }}"
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          
+          tag = "${TAG}"
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          lines = changelog.splitlines()
+          
+          header_re = re.compile(r"^##\\s+\\[?(?P<tag>[^\\]]+)\\]?\\s*$")
+          start = None
+          end = None
+          for idx, line in enumerate(lines):
+              match = header_re.match(line)
+              if not match:
+                  continue
+              if match.group("tag").strip() == tag:
+                  start = idx + 1
+                  continue
+              if start is not None and idx > start:
+                  end = idx
+                  break
+          
+          notes_path = Path("release-notes.md")
+          if start is None:
+              notes_path.write_text(f"# Release {tag}\\n\\nNo changelog section found.\\n", encoding="utf-8")
+          else:
+              section = "\\n".join(lines[start:end]).strip()
+              if not section:
+                  section = "No entries."
+              notes_path.write_text(f"# Release {tag}\\n\\n{section}\\n", encoding="utf-8")
+          PY
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body_path: release-notes.md
+
+  smoke:
+    name: Smoke test artifacts
+    runs-on: ${{ matrix.os }}
+    needs: build
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Build (native, unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          COMMIT="${{ github.sha }}"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LD_FLAGS="-X mochi-sticky/internal/version.Version=${VERSION} -X mochi-sticky/internal/version.Commit=${COMMIT} -X mochi-sticky/internal/version.Date=${BUILD_DATE}"
+          go build -ldflags "${LD_FLAGS}" -o mochi-sticky ./...
+
+      - name: Build (native, windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $Version = "${{ github.ref_name }}"
+          $Commit = "${{ github.sha }}"
+          $BuildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $LdFlags = "-X mochi-sticky/internal/version.Version=$Version -X mochi-sticky/internal/version.Commit=$Commit -X mochi-sticky/internal/version.Date=$BuildDate"
+          go build -ldflags "$LdFlags" -o mochi-sticky.exe ./...
+
+      - name: Smoke test --version (unix)
+        if: runner.os != 'Windows'
+        run: ./mochi-sticky --version
+
+      - name: Smoke test --version (windows)
+        if: runner.os == 'Windows'
+        run: .\\mochi-sticky.exe --version

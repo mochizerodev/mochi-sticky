@@ -1,0 +1,8 @@
+mochi-sticky
+coverage.out
+*.prof
+dist/
+.cache/
+.DS_Store
+*.log
+*.tmp

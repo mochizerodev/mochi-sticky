@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <clipPath id="card-clip">
+       <!-- The main card shape with the corner cut off -->
+       <path d="M16 24c0-9.94 8.06-18 18-18h110l32 32v120c0 9.94-8.06 18-18 18H34c-9.94 0-18-8.06-18-18V24z" />
+    </clipPath>
+  </defs>
+
+  <!-- Shadow Layer (dark grey, offset) -->
+  <path d="M32 40h110l32 32v112c0 14-11 26-26 26H50c-14 0-26-11-26-26V48" fill="#586069" opacity="0.6"/>
+
+  <!-- Main Card Body -->
+  <g clip-path="url(#card-clip)">
+    <!-- Base Color -->
+    <rect x="0" y="0" width="200" height="200" fill="#f6f8fa"/>
+    <!-- Orange Stripe -->
+    <rect x="0" y="38" width="200" height="18" fill="#f39c12"/>
+  </g>
+
+  <!-- Outline / Stroke for definition -->
+  <path d="M16 24c0-9.94 8.06-18 18-18h110l32 32v120c0 9.94-8.06 18-18 18H34c-9.94 0-18-8.06-18-18V24z" fill="none" stroke="#d1d5da" stroke-width="2"/>
+
+  <!-- Folded Corner (Triangle) -->
+  <path d="M144 6v32h32L144 6z" fill="#ffffff"/>
+  <path d="M144 6v32h32" fill="none" stroke="#d1d5da" stroke-width="2"/>
+  <!-- Fold shadow -->
+  <path d="M144 6l32 32l-32 0z" fill="#000" opacity="0.1"/>
+
+  <!-- Vertical Orange Mark (Bottom Left) -->
+  <rect x="34" y="130" width="12" height="30" rx="2" fill="#f39c12"/>
+</svg>
