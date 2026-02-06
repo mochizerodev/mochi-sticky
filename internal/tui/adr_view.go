@@ -83,7 +83,7 @@ func (m Model) renderADRScreen(helpOverride string) string {
 		rendered = append(rendered, m.renderADRColumn(column, i == m.adrActive, columnWidth, i == len(m.adrColumns)-1, columnHeight))
 	}
 	board := lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
-	kanbanStyleSized := kanbanStyle.Copy()
+	kanbanStyleSized := kanbanStyle
 	if availableWidth > 0 {
 		kanbanStyleSized = kanbanStyleSized.Width(availableWidth)
 	}
@@ -154,7 +154,7 @@ func (m Model) renderADRColumn(column adrColumnModel, active bool, width int, is
 		}
 	}
 
-	style := columnBorder.Copy().Width(width)
+	style := columnBorder.Width(width)
 	if height > 0 {
 		contentHeight := max(0, height-2)
 		if contentHeight > 0 {
