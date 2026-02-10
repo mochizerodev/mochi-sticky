@@ -29,12 +29,35 @@ jobs:
           check-latest: true
           cache: true
 
-      - name: Test
-        run: go test ./...
-
-      - name: Build
+      - name: Build and capture telemetry
+        shell: bash
         run: |
+          set -uo pipefail
           mkdir -p dist
+          mkdir -p .sticky/release/telemetry/runs
+
+          now_ms() {
+            python3 -c 'import time; print(int(time.time() * 1000))'
+          }
+
+          RUN_ID="${{ github.run_id }}-${{ github.run_attempt }}-build-${{ matrix.goos }}-${{ matrix.goarch }}"
+          RUN_PATH=".sticky/release/telemetry/runs/${RUN_ID}.json"
+          STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          RUN_STATUS="success"
+          TEST_STATUS="success"
+          BUILD_STATUS="success"
+          EXPORT_STATUS="success"
+
+          TEST_START_MS="$(now_ms)"
+          go test ./...
+          TEST_EXIT=$?
+          TEST_END_MS="$(now_ms)"
+          if [ "${TEST_EXIT}" -ne 0 ]; then
+            TEST_STATUS="failure"
+            RUN_STATUS="failure"
+          fi
+
           BIN_NAME="mochi-sticky-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BIN_NAME="${BIN_NAME}.exe"
@@ -43,7 +66,96 @@ jobs:
           COMMIT="${{ github.sha }}"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           LD_FLAGS="-X mochi-sticky/internal/version.Version=${VERSION} -X mochi-sticky/internal/version.Commit=${COMMIT} -X mochi-sticky/internal/version.Date=${BUILD_DATE}"
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "${LD_FLAGS}" -o "dist/${BIN_NAME}" .
+
+          BUILD_START_MS="$(now_ms)"
+          if [ "${RUN_STATUS}" = "success" ]; then
+            GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "${LD_FLAGS}" -o "dist/${BIN_NAME}" .
+            BUILD_EXIT=$?
+            if [ "${BUILD_EXIT}" -ne 0 ]; then
+              BUILD_STATUS="failure"
+              RUN_STATUS="failure"
+            fi
+          else
+            BUILD_STATUS="skipped"
+          fi
+          BUILD_END_MS="$(now_ms)"
+
+          ARTIFACT_SIZE=0
+          EXPORT_START_MS="$(now_ms)"
+          if [ "${RUN_STATUS}" = "success" ]; then
+            if [ -f "dist/${BIN_NAME}" ]; then
+              ARTIFACT_SIZE="$(wc -c < "dist/${BIN_NAME}" | tr -d '[:space:]')"
+              sha256sum "dist/${BIN_NAME}" > "dist/${BIN_NAME}.sha256"
+            else
+              EXPORT_STATUS="failure"
+              RUN_STATUS="failure"
+            fi
+          else
+            EXPORT_STATUS="skipped"
+          fi
+          EXPORT_END_MS="$(now_ms)"
+
+          FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > "${RUN_PATH}" <<JSON
+          {
+            "schema_version": 1,
+            "run_id": "${RUN_ID}",
+            "source": "github-actions",
+            "workflow": "${{ github.workflow }}",
+            "job": "build",
+            "status": "${RUN_STATUS}",
+            "repository": "${{ github.repository }}",
+            "run_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "ref_name": "${{ github.ref_name }}",
+            "ref_type": "tag",
+            "branch": "${{ github.event.release.target_commitish }}",
+            "tag": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "started_at": "${STARTED_AT}",
+            "finished_at": "${FINISHED_AT}",
+            "config": {
+              "go_version_file": "go.mod"
+            },
+            "platforms": [
+              {
+                "name": "${{ matrix.goos }}-${{ matrix.goarch }}",
+                "runner_os": "${{ runner.os }}",
+                "runner_arch": "${{ runner.arch }}",
+                "status": "${RUN_STATUS}",
+                "artifact_bytes": ${ARTIFACT_SIZE},
+                "stages": [
+                  {
+                    "name": "test",
+                    "status": "${TEST_STATUS}",
+                    "duration_ms": $((TEST_END_MS - TEST_START_MS))
+                  },
+                  {
+                    "name": "build",
+                    "status": "${BUILD_STATUS}",
+                    "duration_ms": $((BUILD_END_MS - BUILD_START_MS))
+                  },
+                  {
+                    "name": "export",
+                    "status": "${EXPORT_STATUS}",
+                    "duration_ms": $((EXPORT_END_MS - EXPORT_START_MS))
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+
+          if [ "${RUN_STATUS}" != "success" ]; then
+            exit 1
+          fi
+
+      - name: Upload build telemetry artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-telemetry-build-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: .sticky/release/telemetry/runs/*.json
+          if-no-files-found: ignore
 
       - name: Generate release notes
         run: |
@@ -84,7 +196,9 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/*
+            .sticky/release/telemetry/runs/*.json
           body_path: release-notes.md
 
   smoke:
@@ -105,30 +219,189 @@ jobs:
           check-latest: true
           cache: true
 
-      - name: Build (native, unix)
+      - name: Smoke + telemetry (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          set -uo pipefail
+          mkdir -p .sticky/release/telemetry/runs
+
+          now_ms() {
+            python3 -c 'import time; print(int(time.time() * 1000))'
+          }
+
+          RUN_ID="${{ github.run_id }}-${{ github.run_attempt }}-smoke-${{ runner.os }}-${{ runner.arch }}"
+          RUN_PATH=".sticky/release/telemetry/runs/${RUN_ID}.json"
+          STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          RUN_STATUS="success"
+          BUILD_STATUS="success"
+          SMOKE_STATUS="success"
+
           VERSION="${{ github.ref_name }}"
           COMMIT="${{ github.sha }}"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           LD_FLAGS="-X mochi-sticky/internal/version.Version=${VERSION} -X mochi-sticky/internal/version.Commit=${COMMIT} -X mochi-sticky/internal/version.Date=${BUILD_DATE}"
+          BUILD_START_MS="$(now_ms)"
           go build -ldflags "${LD_FLAGS}" -o mochi-sticky .
+          BUILD_EXIT=$?
+          BUILD_END_MS="$(now_ms)"
+          if [ "${BUILD_EXIT}" -ne 0 ]; then
+            BUILD_STATUS="failure"
+            RUN_STATUS="failure"
+          fi
 
-      - name: Build (native, windows)
+          SMOKE_START_MS="$(now_ms)"
+          if [ "${RUN_STATUS}" = "success" ]; then
+            ./mochi-sticky --version
+            SMOKE_EXIT=$?
+            if [ "${SMOKE_EXIT}" -ne 0 ]; then
+              SMOKE_STATUS="failure"
+              RUN_STATUS="failure"
+            fi
+          else
+            SMOKE_STATUS="skipped"
+          fi
+          SMOKE_END_MS="$(now_ms)"
+
+          FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > "${RUN_PATH}" <<JSON
+          {
+            "schema_version": 1,
+            "run_id": "${RUN_ID}",
+            "source": "github-actions",
+            "workflow": "${{ github.workflow }}",
+            "job": "smoke",
+            "status": "${RUN_STATUS}",
+            "repository": "${{ github.repository }}",
+            "run_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "ref_name": "${{ github.ref_name }}",
+            "ref_type": "tag",
+            "branch": "${{ github.event.release.target_commitish }}",
+            "tag": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "started_at": "${STARTED_AT}",
+            "finished_at": "${FINISHED_AT}",
+            "config": {
+              "go_version_file": "go.mod"
+            },
+            "platforms": [
+              {
+                "name": "${{ runner.os }}-${{ runner.arch }}",
+                "runner_os": "${{ runner.os }}",
+                "runner_arch": "${{ runner.arch }}",
+                "status": "${RUN_STATUS}",
+                "stages": [
+                  {
+                    "name": "build",
+                    "status": "${BUILD_STATUS}",
+                    "duration_ms": $((BUILD_END_MS - BUILD_START_MS))
+                  },
+                  {
+                    "name": "smoke",
+                    "status": "${SMOKE_STATUS}",
+                    "duration_ms": $((SMOKE_END_MS - SMOKE_START_MS))
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+
+          if [ "${RUN_STATUS}" != "success" ]; then
+            exit 1
+          fi
+
+      - name: Smoke + telemetry (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          New-Item -Path ".sticky/release/telemetry/runs" -ItemType Directory -Force | Out-Null
+
+          $RunId = "${{ github.run_id }}-${{ github.run_attempt }}-smoke-${{ runner.os }}-${{ runner.arch }}"
+          $RunPath = ".sticky/release/telemetry/runs/$RunId.json"
+          $StartedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+          $RunStatus = "success"
+          $BuildStatus = "success"
+          $SmokeStatus = "success"
+
           $Version = "${{ github.ref_name }}"
           $Commit = "${{ github.sha }}"
           $BuildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $LdFlags = "-X mochi-sticky/internal/version.Version=$Version -X mochi-sticky/internal/version.Commit=$Commit -X mochi-sticky/internal/version.Date=$BuildDate"
+
+          $BuildStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
           go build -ldflags "$LdFlags" -o mochi-sticky.exe .
+          $BuildEnd = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          if ($LASTEXITCODE -ne 0) {
+            $BuildStatus = "failure"
+            $RunStatus = "failure"
+          }
 
-      - name: Smoke test --version (unix)
-        if: runner.os != 'Windows'
-        run: ./mochi-sticky --version
+          $SmokeStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          if ($RunStatus -eq "success") {
+            .\mochi-sticky.exe --version
+            if ($LASTEXITCODE -ne 0) {
+              $SmokeStatus = "failure"
+              $RunStatus = "failure"
+            }
+          } else {
+            $SmokeStatus = "skipped"
+          }
+          $SmokeEnd = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
-      - name: Smoke test --version (windows)
-        if: runner.os == 'Windows'
-        run: .\\mochi-sticky.exe --version
+          $FinishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $RunPayload = @{
+            schema_version = 1
+            run_id = $RunId
+            source = "github-actions"
+            workflow = "${{ github.workflow }}"
+            job = "smoke"
+            status = $RunStatus
+            repository = "${{ github.repository }}"
+            run_url = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            ref_name = "${{ github.ref_name }}"
+            ref_type = "tag"
+            branch = "${{ github.event.release.target_commitish }}"
+            tag = "${{ github.ref_name }}"
+            commit = "${{ github.sha }}"
+            started_at = $StartedAt
+            finished_at = $FinishedAt
+            config = @{
+              go_version_file = "go.mod"
+            }
+            platforms = @(
+              @{
+                name = "${{ runner.os }}-${{ runner.arch }}"
+                runner_os = "${{ runner.os }}"
+                runner_arch = "${{ runner.arch }}"
+                status = $RunStatus
+                stages = @(
+                  @{
+                    name = "build"
+                    status = $BuildStatus
+                    duration_ms = [math]::Max($BuildEnd - $BuildStart, 0)
+                  },
+                  @{
+                    name = "smoke"
+                    status = $SmokeStatus
+                    duration_ms = [math]::Max($SmokeEnd - $SmokeStart, 0)
+                  }
+                )
+              }
+            )
+          } | ConvertTo-Json -Depth 8
+          Set-Content -Path $RunPath -Value $RunPayload
+
+          if ($RunStatus -ne "success") {
+            exit 1
+          }
+
+      - name: Upload smoke telemetry artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-telemetry-smoke-${{ matrix.os }}
+          path: .sticky/release/telemetry/runs/*.json
+          if-no-files-found: ignore

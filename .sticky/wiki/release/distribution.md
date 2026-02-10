@@ -71,11 +71,21 @@ GOOS=windows GOARCH=arm64 go build -o dist/mochi-sticky-windows-arm64.exe
 - GitHub Actions builds artifacts for Linux/macOS/Windows and uploads them to the GitHub Release.
 - Version metadata is stamped at build time via `-ldflags` (version, commit, build date).
 - A smoke test job runs after builds and executes `mochi-sticky --version` on each OS.
+- The release workflow emits structured telemetry JSON for build/smoke stages per platform.
+- Telemetry files are written under `.sticky/release/telemetry/runs/` and uploaded as CI artifacts (and with release assets for build jobs).
 
-## 5. Signing
+## 5. Release telemetry interpretation
+
+- Telemetry fields include run identity, workflow/job metadata, git ref/commit, platform status, per-stage durations, and artifact byte sizes.
+- Use `mochi-sticky release telemetry` to summarize recent runs (success rate + slowest stage).
+- Use `mochi-sticky release telemetry --json` for machine-readable dashboards/automation.
+- If telemetry was downloaded from CI/release artifacts, import it locally with:
+  - `mochi-sticky release telemetry import path/to/telemetry.json`
+
+## 6. Signing
 
 Binary signing is not implemented yet. If/when added, platform-specific signing steps should be inserted into the release workflow after the build step.
 
-## 6. Optional: GoReleaser
+## 7. Optional: GoReleaser
 
 If you adopt GoReleaser later, it can automate multi-platform builds, checksums, and GitHub Releases.

@@ -184,6 +184,8 @@ Root:
 - `mochi-sticky init`: scaffold `.sticky` and default board
 - `mochi-sticky hydrate`: validate storage/config and print a summary (use `--json [--pretty]` for automation)
 - `mochi-sticky tui`: launch the TUI
+- `mochi-sticky release telemetry [--limit N] [--json]`: summarize release telemetry
+- `mochi-sticky release telemetry import <file...>`: import telemetry JSON files into local storage
 
 Tasks:
 - `mochi-sticky task add "Title" [--tags tag1,tag2] [--priority 1|2|3]`

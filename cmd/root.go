@@ -7,6 +7,7 @@ import (
 	"mochi-sticky/cmd/adr"
 	"mochi-sticky/cmd/board"
 	taskcmd "mochi-sticky/cmd/board/task"
+	"mochi-sticky/cmd/release"
 	"mochi-sticky/cmd/tui"
 	"mochi-sticky/cmd/wiki"
 
@@ -38,6 +39,7 @@ func init() {
 	)
 	adr.Register(rootCmd)
 	board.Register(rootCmd)
+	release.Register(rootCmd)
 	taskcmd.Register(rootCmd)
 	wiki.Register(rootCmd)
 	tui.Register(rootCmd)
