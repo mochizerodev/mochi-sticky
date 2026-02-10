@@ -48,11 +48,12 @@ jobs:
       - name: Generate release notes
         run: |
           TAG="${{ github.ref_name }}"
-          python - <<'PY'
+          python - <<PY
           import re
           from pathlib import Path
+          import os
           
-          tag = "${TAG}"
+          tag = os.environ.get("TAG", "")
           changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
           lines = changelog.splitlines()
           
