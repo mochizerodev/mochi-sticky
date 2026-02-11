@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.1.1]
+
 - Cross-platform installers: `scripts/install.sh` (Linux/macOS) and `scripts/install.ps1` (Windows) with checksum verification, version pinning, custom install dir support, and forced replace mode for upgrades.
 - Release workflow now publishes platform archives (`.tar.gz`/`.zip`), `.sha256` checksum files, and artifact metadata JSON; smoke tests install from built artifacts and validate basic CLI commands.
 - Fixed release packaging status handling so archive creation failures are not masked by cleanup.
