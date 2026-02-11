@@ -146,23 +146,23 @@ jobs:
               fi
 
               if [ "${RUN_STATUS}" = "success" ]; then
-                cat > "dist/${BIN_BASE}.metadata.json" <<JSON
-                {
-                  "schema_version": 1,
-                  "artifact": "${ARCHIVE_NAME}",
-                  "binary": "${BIN_NAME}",
-                  "binary_in_archive": "${INTERNAL_BIN}",
-                  "checksum": "${ARCHIVE_NAME}.sha256",
-                  "platform": "${{ matrix.goos }}",
-                  "arch": "${{ matrix.goarch }}",
-                  "repository": "${{ github.repository }}",
-                  "tag": "${{ github.ref_name }}",
-                  "run_id": "${{ github.run_id }}",
-                  "run_attempt": "${{ github.run_attempt }}",
-                  "install_script_unix": "scripts/install.sh",
-                  "install_script_windows": "scripts/install.ps1"
-                }
-                JSON
+          cat > "dist/${BIN_BASE}.metadata.json" <<JSON
+          {
+            "schema_version": 1,
+            "artifact": "${ARCHIVE_NAME}",
+            "binary": "${BIN_NAME}",
+            "binary_in_archive": "${INTERNAL_BIN}",
+            "checksum": "${ARCHIVE_NAME}.sha256",
+            "platform": "${{ matrix.goos }}",
+            "arch": "${{ matrix.goarch }}",
+            "repository": "${{ github.repository }}",
+            "tag": "${{ github.ref_name }}",
+            "run_id": "${{ github.run_id }}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "install_script_unix": "scripts/install.sh",
+            "install_script_windows": "scripts/install.ps1"
+          }
+          JSON
                 META_EXIT=$?
                 if [ "${META_EXIT}" -ne 0 ]; then
                   EXPORT_STATUS="failure"
