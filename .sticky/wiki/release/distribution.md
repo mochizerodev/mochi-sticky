@@ -8,17 +8,28 @@ status: published
 ---
 # Distribution Guide
 
-This document describes how to build and release `mochi-sticky` for Linux, macOS, and Windows.
+This document describes release packaging, install artifacts, and CI validation for Linux, macOS, and Windows.
 
 ## Artifact naming
 
-Release artifacts are named by platform and architecture:
+Release artifacts are produced by platform and architecture:
 
-- `mochi-sticky-linux-amd64`
-- `mochi-sticky-linux-arm64`
-- `mochi-sticky-darwin-amd64`
-- `mochi-sticky-darwin-arm64`
-- `mochi-sticky-windows-amd64.exe`
+- Raw binaries:
+  - `mochi-sticky-linux-amd64`
+  - `mochi-sticky-linux-arm64`
+  - `mochi-sticky-darwin-amd64`
+  - `mochi-sticky-darwin-arm64`
+  - `mochi-sticky-windows-amd64.exe`
+- Install archives:
+  - `mochi-sticky-linux-amd64.tar.gz`
+  - `mochi-sticky-linux-arm64.tar.gz`
+  - `mochi-sticky-darwin-amd64.tar.gz`
+  - `mochi-sticky-darwin-arm64.tar.gz`
+  - `mochi-sticky-windows-amd64.zip`
+- Checksums:
+  - `<artifact>.sha256` for each binary/archive
+- Metadata:
+  - `mochi-sticky-<goos>-<goarch>.metadata.json`
 
 Windows `arm64` builds are currently excluded in CI.
 
@@ -62,17 +73,24 @@ GOOS=windows GOARCH=arm64 go build -o dist/mochi-sticky-windows-arm64.exe
 
 - Run tests: `go test ./...`
 - Build all targets into `dist/`
-- Verify `mochi-sticky --version` output on each OS
-- Create checksums (optional): `sha256sum dist/* > dist/sha256sums.txt`
-- Tag the release in git, attach artifacts.
+- Package installer archives (`.tar.gz` on Linux/macOS, `.zip` on Windows)
+- Generate per-artifact checksums (`.sha256`)
+- Verify install + version + basic command on Linux/macOS/Windows runners
+- Publish release assets and release notes with installer snippets
 
 ## 4. CI pipeline behavior
 
 - GitHub Actions builds artifacts for Linux/macOS/Windows and uploads them to the GitHub Release.
 - Version metadata is stamped at build time via `-ldflags` (version, commit, build date).
-- A smoke test job runs after builds and executes `mochi-sticky --version` on each OS.
+- The workflow uploads per-platform install bundles as intermediate artifacts.
+- A smoke test job downloads install bundles and validates:
+  - checksum verification
+  - installer execution
+  - `mochi-sticky --version`
+  - `mochi-sticky init` + `mochi-sticky board list`
 - The release workflow emits structured telemetry JSON for build/smoke stages per platform.
 - Telemetry files are written under `.sticky/release/telemetry/runs/` and uploaded as CI artifacts (and with release assets for build jobs).
+- Release notes are generated with install snippets for shell/PowerShell installers and direct artifact names.
 
 ## 5. Release telemetry interpretation
 
@@ -82,10 +100,33 @@ GOOS=windows GOARCH=arm64 go build -o dist/mochi-sticky-windows-arm64.exe
 - If telemetry was downloaded from CI/release artifacts, import it locally with:
   - `mochi-sticky release telemetry import path/to/telemetry.json`
 
-## 6. Signing
+## 6. Installer operations by platform
+
+Linux:
+- Install/upgrade/downgrade: rerun `scripts/install.sh` with optional `--version <tag>`.
+- Verify: `mochi-sticky --version`, then `mochi-sticky init` + `mochi-sticky board list`.
+- Uninstall: remove `mochi-sticky` from `/usr/local/bin` or `~/.local/bin`.
+
+macOS:
+- Install/upgrade/downgrade: shell installer (`scripts/install.sh`) and optional Homebrew flow when formula/tap is available.
+- Verify: `mochi-sticky --version`, `mochi-sticky init`, basic command run.
+- Uninstall: remove binary path (or `brew uninstall mochi-sticky` if installed via Homebrew).
+
+Windows:
+- Install/upgrade/downgrade: `scripts/install.ps1` using release `.zip` + `.sha256`.
+- Verify: `mochi-sticky --version` and `mochi-sticky board list` in a fresh initialized directory.
+- Uninstall: remove `%LOCALAPPDATA%\Programs\mochi-sticky\bin\mochi-sticky.exe`.
+
+## 7. Failure handling reference
+
+- PATH issues: ensure install directory is in PATH and restart shell/PowerShell session.
+- Permission errors: install to user-local directory (`~/.local/bin` or `%LOCALAPPDATA%\Programs\...`) or rerun with elevated privileges.
+- Checksum mismatches: ensure artifact and checksum come from the same release tag; retry download; avoid stale mirrored caches.
+
+## 8. Signing
 
 Binary signing is not implemented yet. If/when added, platform-specific signing steps should be inserted into the release workflow after the build step.
 
-## 7. Optional: GoReleaser
+## 9. Optional: GoReleaser
 
 If you adopt GoReleaser later, it can automate multi-platform builds, checksums, and GitHub Releases.

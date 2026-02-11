@@ -10,7 +10,7 @@ Prerequisites:
 
 Clone and build:
 ```bash
-git clone https://github.com/mochizero0/mochi-sticky.git
+git clone https://github.com/mochizerodev/mochi-sticky.git
 cd mochi-sticky
 go build ./...
 ```

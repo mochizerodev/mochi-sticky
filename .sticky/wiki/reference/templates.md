@@ -381,7 +381,9 @@ dependencies: []      # Optional relationships
 
 3. Re-initialize if missing:
    ```bash
-   mochi-sticky init --force
+   # WARNING: this will remove your local tasks/boards/wiki for this repo.
+   mv .sticky ".sticky.bak-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+   mochi-sticky init
    ```
 
 ### Invalid Template Variables
