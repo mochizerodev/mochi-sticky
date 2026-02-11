@@ -40,6 +40,20 @@ jobs:
             python3 -c 'import time; print(int(time.time() * 1000))'
           }
 
+          hash_file() {
+            local target="$1"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$target" | awk '{print $1}'
+              return 0
+            fi
+            if command -v shasum >/dev/null 2>&1; then
+              shasum -a 256 "$target" | awk '{print $1}'
+              return 0
+            fi
+            echo "No SHA256 tool found (sha256sum or shasum)." >&2
+            return 1
+          }
+
           RUN_ID="${{ github.run_id }}-${{ github.run_attempt }}-build-${{ matrix.goos }}-${{ matrix.goarch }}"
           RUN_PATH=".sticky/release/telemetry/runs/${RUN_ID}.json"
           STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -62,9 +76,11 @@ jobs:
           BIN_BASE="mochi-sticky-${{ matrix.goos }}-${{ matrix.goarch }}"
           BIN_NAME="${BIN_BASE}"
           ARCHIVE_NAME="${BIN_BASE}.tar.gz"
+          INTERNAL_BIN="mochi-sticky"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BIN_NAME="${BIN_NAME}.exe"
             ARCHIVE_NAME="${BIN_BASE}.zip"
+            INTERNAL_BIN="mochi-sticky.exe"
           fi
           VERSION="${{ github.ref_name }}"
           COMMIT="${{ github.sha }}"
@@ -91,14 +107,20 @@ jobs:
               ARTIFACT_SIZE="$(wc -c < "dist/${BIN_NAME}" | tr -d '[:space:]')"
               PACKAGE_START_MS="$(now_ms)"
               if [ "${{ matrix.goos }}" = "windows" ]; then
-                (
-                  cd dist
-                  zip -q "${ARCHIVE_NAME}" "${BIN_NAME}"
+                STAGE_DIR="$(mktemp -d)"
+                cp "dist/${BIN_NAME}" "${STAGE_DIR}/${INTERNAL_BIN}" && (
+                  cd "${STAGE_DIR}"
+                  zip -q "${GITHUB_WORKSPACE}/dist/${ARCHIVE_NAME}" "${INTERNAL_BIN}"
                 )
+                PACKAGE_EXIT=$?
+                rm -rf "${STAGE_DIR}"
               else
-                tar -C dist -czf "dist/${ARCHIVE_NAME}" "${BIN_NAME}"
+                STAGE_DIR="$(mktemp -d)"
+                cp "dist/${BIN_NAME}" "${STAGE_DIR}/${INTERNAL_BIN}" && \
+                  tar -C "${STAGE_DIR}" -czf "dist/${ARCHIVE_NAME}" "${INTERNAL_BIN}"
+                PACKAGE_EXIT=$?
+                rm -rf "${STAGE_DIR}"
               fi
-              PACKAGE_EXIT=$?
               PACKAGE_END_MS="$(now_ms)"
               if [ "${PACKAGE_EXIT}" -ne 0 ]; then
                 PACKAGE_STATUS="failure"
@@ -129,6 +151,7 @@ jobs:
                   "schema_version": 1,
                   "artifact": "${ARCHIVE_NAME}",
                   "binary": "${BIN_NAME}",
+                  "binary_in_archive": "${INTERNAL_BIN}",
                   "checksum": "${ARCHIVE_NAME}.sha256",
                   "platform": "${{ matrix.goos }}",
                   "arch": "${{ matrix.goarch }}",
@@ -351,6 +374,20 @@ jobs:
             python3 -c 'import time; print(int(time.time() * 1000))'
           }
 
+          hash_file() {
+            local target="$1"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$target" | awk '{print $1}'
+              return 0
+            fi
+            if command -v shasum >/dev/null 2>&1; then
+              shasum -a 256 "$target" | awk '{print $1}'
+              return 0
+            fi
+            echo "No SHA256 tool found (sha256sum or shasum)." >&2
+            return 1
+          }
+
           RUN_ID="${{ github.run_id }}-${{ github.run_attempt }}-smoke-${{ runner.os }}-${{ runner.arch }}"
           RUN_PATH=".sticky/release/telemetry/runs/${RUN_ID}.json"
           STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -373,11 +410,13 @@ jobs:
 
           VERIFY_START_MS="$(now_ms)"
           if [ -f "dist/${ARCHIVE_NAME}" ] && [ -f "dist/${CHECKSUM_NAME}" ]; then
-            (
-              cd dist
-              sha256sum -c "${CHECKSUM_NAME}"
-            )
-            VERIFY_EXIT=$?
+            EXPECTED_HASH="$(awk '{print $1}' "dist/${CHECKSUM_NAME}" | head -n 1 | tr '[:upper:]' '[:lower:]')"
+            ACTUAL_HASH="$(hash_file "dist/${ARCHIVE_NAME}" | tr '[:upper:]' '[:lower:]')"
+            if [ -n "${EXPECTED_HASH}" ] && [ "${EXPECTED_HASH}" = "${ACTUAL_HASH}" ]; then
+              VERIFY_EXIT=0
+            else
+              VERIFY_EXIT=1
+            fi
             if [ "${VERIFY_EXIT}" -ne 0 ]; then
               VERIFY_STATUS="failure"
               RUN_STATUS="failure"

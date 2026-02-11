@@ -2,6 +2,7 @@ mochi-sticky
 coverage.out
 *.prof
 dist/
+dist-local
 .cache/
 .DS_Store
 *.log

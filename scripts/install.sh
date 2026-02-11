@@ -67,11 +67,6 @@ while (($# > 0)); do
   esac
 done
 
-if ! command -v curl >/dev/null 2>&1; then
-  echo "curl is required." >&2
-  exit 1
-fi
-
 hash_file() {
   local target="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -144,9 +139,9 @@ resolve_install_dir() {
 }
 
 main() {
-  local tmp_dir archive_path checksum_path target_dir install_path os arch base_name archive_name base_url extracted_path
+  local archive_path checksum_path target_dir install_path os arch base_name archive_name base_url extracted_path
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "${tmp_dir}"' EXIT
+  trap '[[ -n "${tmp_dir:-}" ]] && rm -rf "${tmp_dir}"' EXIT
 
   if [[ -n "$FROM_FILE" ]]; then
     archive_path="$FROM_FILE"
@@ -155,6 +150,10 @@ main() {
       exit 1
     fi
   else
+    if ! command -v curl >/dev/null 2>&1; then
+      echo "curl is required for remote downloads." >&2
+      exit 1
+    fi
     read -r os arch <<<"$(detect_platform)"
     base_name="${BIN_NAME}-${os}-${arch}"
     archive_name="${base_name}.tar.gz"
