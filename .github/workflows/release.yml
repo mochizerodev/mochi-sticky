@@ -29,30 +29,248 @@ jobs:
           check-latest: true
           cache: true
 
-      - name: Test
-        run: go test ./...
-
-      - name: Build
+      - name: Build and capture telemetry
+        shell: bash
         run: |
+          set -uo pipefail
           mkdir -p dist
-          BIN_NAME="mochi-sticky-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p .sticky/release/telemetry/runs
+
+          now_ms() {
+            python3 -c 'import time; print(int(time.time() * 1000))'
+          }
+
+          hash_file() {
+            local target="$1"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$target" | awk '{print $1}'
+              return 0
+            fi
+            if command -v shasum >/dev/null 2>&1; then
+              shasum -a 256 "$target" | awk '{print $1}'
+              return 0
+            fi
+            echo "No SHA256 tool found (sha256sum or shasum)." >&2
+            return 1
+          }
+
+          RUN_ID="${{ github.run_id }}-${{ github.run_attempt }}-build-${{ matrix.goos }}-${{ matrix.goarch }}"
+          RUN_PATH=".sticky/release/telemetry/runs/${RUN_ID}.json"
+          STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          RUN_STATUS="success"
+          TEST_STATUS="success"
+          BUILD_STATUS="success"
+          PACKAGE_STATUS="success"
+          EXPORT_STATUS="success"
+
+          TEST_START_MS="$(now_ms)"
+          go test ./...
+          TEST_EXIT=$?
+          TEST_END_MS="$(now_ms)"
+          if [ "${TEST_EXIT}" -ne 0 ]; then
+            TEST_STATUS="failure"
+            RUN_STATUS="failure"
+          fi
+
+          BIN_BASE="mochi-sticky-${{ matrix.goos }}-${{ matrix.goarch }}"
+          BIN_NAME="${BIN_BASE}"
+          ARCHIVE_NAME="${BIN_BASE}.tar.gz"
+          INTERNAL_BIN="mochi-sticky"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BIN_NAME="${BIN_NAME}.exe"
+            ARCHIVE_NAME="${BIN_BASE}.zip"
+            INTERNAL_BIN="mochi-sticky.exe"
           fi
           VERSION="${{ github.ref_name }}"
           COMMIT="${{ github.sha }}"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           LD_FLAGS="-X mochi-sticky/internal/version.Version=${VERSION} -X mochi-sticky/internal/version.Commit=${COMMIT} -X mochi-sticky/internal/version.Date=${BUILD_DATE}"
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "${LD_FLAGS}" -o "dist/${BIN_NAME}" .
+
+          BUILD_START_MS="$(now_ms)"
+          if [ "${RUN_STATUS}" = "success" ]; then
+            GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "${LD_FLAGS}" -o "dist/${BIN_NAME}" .
+            BUILD_EXIT=$?
+            if [ "${BUILD_EXIT}" -ne 0 ]; then
+              BUILD_STATUS="failure"
+              RUN_STATUS="failure"
+            fi
+          else
+            BUILD_STATUS="skipped"
+          fi
+          BUILD_END_MS="$(now_ms)"
+
+          ARTIFACT_SIZE=0
+          EXPORT_START_MS="$(now_ms)"
+          if [ "${RUN_STATUS}" = "success" ]; then
+            if [ -f "dist/${BIN_NAME}" ]; then
+              ARTIFACT_SIZE="$(wc -c < "dist/${BIN_NAME}" | tr -d '[:space:]')"
+              PACKAGE_START_MS="$(now_ms)"
+              if [ "${{ matrix.goos }}" = "windows" ]; then
+                STAGE_DIR="$(mktemp -d)"
+                cp "dist/${BIN_NAME}" "${STAGE_DIR}/${INTERNAL_BIN}" && (
+                  cd "${STAGE_DIR}"
+                  zip -q "${GITHUB_WORKSPACE}/dist/${ARCHIVE_NAME}" "${INTERNAL_BIN}"
+                )
+                PACKAGE_EXIT=$?
+                rm -rf "${STAGE_DIR}"
+              else
+                STAGE_DIR="$(mktemp -d)"
+                cp "dist/${BIN_NAME}" "${STAGE_DIR}/${INTERNAL_BIN}" && \
+                  tar -C "${STAGE_DIR}" -czf "dist/${ARCHIVE_NAME}" "${INTERNAL_BIN}"
+                PACKAGE_EXIT=$?
+                rm -rf "${STAGE_DIR}"
+              fi
+              PACKAGE_END_MS="$(now_ms)"
+              if [ "${PACKAGE_EXIT}" -ne 0 ]; then
+                PACKAGE_STATUS="failure"
+                EXPORT_STATUS="failure"
+                RUN_STATUS="failure"
+              fi
+
+              if [ "${RUN_STATUS}" = "success" ]; then
+                (
+                  cd dist
+                  sha256sum "${BIN_NAME}" > "${BIN_NAME}.sha256"
+                )
+                SHA_BIN_EXIT=$?
+                (
+                  cd dist
+                  sha256sum "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+                )
+                SHA_ARCHIVE_EXIT=$?
+                if [ "${SHA_BIN_EXIT}" -ne 0 ] || [ "${SHA_ARCHIVE_EXIT}" -ne 0 ]; then
+                  EXPORT_STATUS="failure"
+                  RUN_STATUS="failure"
+                fi
+              fi
+
+              if [ "${RUN_STATUS}" = "success" ]; then
+                cat > "dist/${BIN_BASE}.metadata.json" <<JSON
+                {
+                  "schema_version": 1,
+                  "artifact": "${ARCHIVE_NAME}",
+                  "binary": "${BIN_NAME}",
+                  "binary_in_archive": "${INTERNAL_BIN}",
+                  "checksum": "${ARCHIVE_NAME}.sha256",
+                  "platform": "${{ matrix.goos }}",
+                  "arch": "${{ matrix.goarch }}",
+                  "repository": "${{ github.repository }}",
+                  "tag": "${{ github.ref_name }}",
+                  "run_id": "${{ github.run_id }}",
+                  "run_attempt": "${{ github.run_attempt }}",
+                  "install_script_unix": "scripts/install.sh",
+                  "install_script_windows": "scripts/install.ps1"
+                }
+                JSON
+                META_EXIT=$?
+                if [ "${META_EXIT}" -ne 0 ]; then
+                  EXPORT_STATUS="failure"
+                  RUN_STATUS="failure"
+                fi
+              fi
+            else
+              EXPORT_STATUS="failure"
+              RUN_STATUS="failure"
+              PACKAGE_START_MS="$(now_ms)"
+              PACKAGE_END_MS="${PACKAGE_START_MS}"
+              PACKAGE_STATUS="failure"
+            fi
+          else
+            PACKAGE_START_MS="$(now_ms)"
+            PACKAGE_END_MS="${PACKAGE_START_MS}"
+            PACKAGE_STATUS="skipped"
+            EXPORT_STATUS="skipped"
+          fi
+          EXPORT_END_MS="$(now_ms)"
+
+          FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > "${RUN_PATH}" <<JSON
+          {
+            "schema_version": 1,
+            "run_id": "${RUN_ID}",
+            "source": "github-actions",
+            "workflow": "${{ github.workflow }}",
+            "job": "build",
+            "status": "${RUN_STATUS}",
+            "repository": "${{ github.repository }}",
+            "run_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "ref_name": "${{ github.ref_name }}",
+            "ref_type": "tag",
+            "branch": "${{ github.event.release.target_commitish }}",
+            "tag": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "started_at": "${STARTED_AT}",
+            "finished_at": "${FINISHED_AT}",
+            "config": {
+              "go_version_file": "go.mod"
+            },
+            "platforms": [
+              {
+                "name": "${{ matrix.goos }}-${{ matrix.goarch }}",
+                "runner_os": "${{ runner.os }}",
+                "runner_arch": "${{ runner.arch }}",
+                "status": "${RUN_STATUS}",
+                "artifact_bytes": ${ARTIFACT_SIZE},
+                "stages": [
+                  {
+                    "name": "test",
+                    "status": "${TEST_STATUS}",
+                    "duration_ms": $((TEST_END_MS - TEST_START_MS))
+                  },
+                  {
+                    "name": "build",
+                    "status": "${BUILD_STATUS}",
+                    "duration_ms": $((BUILD_END_MS - BUILD_START_MS))
+                  },
+                  {
+                    "name": "package",
+                    "status": "${PACKAGE_STATUS}",
+                    "duration_ms": $((PACKAGE_END_MS - PACKAGE_START_MS))
+                  },
+                  {
+                    "name": "export",
+                    "status": "${EXPORT_STATUS}",
+                    "duration_ms": $((EXPORT_END_MS - EXPORT_START_MS))
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+
+          if [ "${RUN_STATUS}" != "success" ]; then
+            exit 1
+          fi
+
+      - name: Upload build telemetry artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-telemetry-build-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: .sticky/release/telemetry/runs/*.json
+          if-no-files-found: ignore
+
+      - name: Upload build install bundle
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-build-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/mochi-sticky-${{ matrix.goos }}-${{ matrix.goarch }}*
+          if-no-files-found: ignore
 
       - name: Generate release notes
         run: |
-          TAG="${{ github.ref_name }}"
-          python - <<'PY'
+          export TAG="${{ github.ref_name }}"
+          export REPO="${{ github.repository }}"
+          python - <<PY
+          import os
           import re
           from pathlib import Path
           
-          tag = "${TAG}"
+          tag = os.environ.get("TAG", "")
+          repo = os.environ.get("REPO", "")
           changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
           lines = changelog.splitlines()
           
@@ -70,20 +288,47 @@ jobs:
                   end = idx
                   break
           
-          notes_path = Path("release-notes.md")
           if start is None:
-              notes_path.write_text(f"# Release {tag}\\n\\nNo changelog section found.\\n", encoding="utf-8")
+              section = "No changelog section found."
           else:
               section = "\\n".join(lines[start:end]).strip()
               if not section:
                   section = "No entries."
-              notes_path.write_text(f"# Release {tag}\\n\\n{section}\\n", encoding="utf-8")
+
+          install_block = f"""## Install
+
+          ### Linux/macOS (shell installer)
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/{repo}/{tag}/scripts/install.sh | bash -s -- --version {tag}
+          ```
+
+          ### Windows (PowerShell installer)
+          ```powershell
+          Invoke-WebRequest -Uri https://raw.githubusercontent.com/{repo}/{tag}/scripts/install.ps1 -OutFile install-mochi-sticky.ps1
+          powershell -ExecutionPolicy Bypass -File .\\install-mochi-sticky.ps1 -Version {tag}
+          ```
+
+          ### Direct artifacts + checksums
+          - `mochi-sticky-linux-amd64.tar.gz` + `.sha256`
+          - `mochi-sticky-linux-arm64.tar.gz` + `.sha256`
+          - `mochi-sticky-darwin-amd64.tar.gz` + `.sha256`
+          - `mochi-sticky-darwin-arm64.tar.gz` + `.sha256`
+          - `mochi-sticky-windows-amd64.zip` + `.sha256`
+
+          Re-run installers with `--version <tag>` (or `-Version <tag>`) to upgrade or downgrade.
+          Troubleshooting: see `getting-started/install` and `troubleshooting/common-issues` in the project wiki.
+          """
+
+          notes_path = Path("release-notes.md")
+          notes_path.write_text(f"# Release {tag}\\n\\n{section}\\n\\n{install_block}\\n", encoding="utf-8")
           PY
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/*
+            .sticky/release/telemetry/runs/*.json
           body_path: release-notes.md
 
   smoke:
@@ -97,37 +342,398 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - name: Download build bundle (linux amd64)
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@v6
         with:
-          go-version-file: go.mod
-          check-latest: true
-          cache: true
+          name: release-build-linux-amd64
+          path: dist
 
-      - name: Build (native, unix)
+      - name: Download build bundle (darwin amd64)
+        if: runner.os == 'macOS'
+        uses: actions/download-artifact@v6
+        with:
+          name: release-build-darwin-amd64
+          path: dist
+
+      - name: Download build bundle (windows amd64)
+        if: runner.os == 'Windows'
+        uses: actions/download-artifact@v6
+        with:
+          name: release-build-windows-amd64
+          path: dist
+
+      - name: Smoke + telemetry (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          VERSION="${{ github.ref_name }}"
-          COMMIT="${{ github.sha }}"
-          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          LD_FLAGS="-X mochi-sticky/internal/version.Version=${VERSION} -X mochi-sticky/internal/version.Commit=${COMMIT} -X mochi-sticky/internal/version.Date=${BUILD_DATE}"
-          go build -ldflags "${LD_FLAGS}" -o mochi-sticky .
+          set -uo pipefail
+          mkdir -p .sticky/release/telemetry/runs
 
-      - name: Build (native, windows)
+          now_ms() {
+            python3 -c 'import time; print(int(time.time() * 1000))'
+          }
+
+          hash_file() {
+            local target="$1"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$target" | awk '{print $1}'
+              return 0
+            fi
+            if command -v shasum >/dev/null 2>&1; then
+              shasum -a 256 "$target" | awk '{print $1}'
+              return 0
+            fi
+            echo "No SHA256 tool found (sha256sum or shasum)." >&2
+            return 1
+          }
+
+          RUN_ID="${{ github.run_id }}-${{ github.run_attempt }}-smoke-${{ runner.os }}-${{ runner.arch }}"
+          RUN_PATH=".sticky/release/telemetry/runs/${RUN_ID}.json"
+          STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          RUN_STATUS="success"
+          VERIFY_STATUS="success"
+          INSTALL_STATUS="success"
+          SMOKE_STATUS="success"
+          UPGRADE_STATUS="success"
+          UNINSTALL_STATUS="success"
+
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            ASSET_OS="linux"
+          else
+            ASSET_OS="darwin"
+          fi
+          ASSET_BASE="mochi-sticky-${ASSET_OS}-amd64"
+          ARCHIVE_NAME="${ASSET_BASE}.tar.gz"
+          CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
+
+          VERIFY_START_MS="$(now_ms)"
+          if [ -f "dist/${ARCHIVE_NAME}" ] && [ -f "dist/${CHECKSUM_NAME}" ]; then
+            EXPECTED_HASH="$(awk '{print $1}' "dist/${CHECKSUM_NAME}" | head -n 1 | tr '[:upper:]' '[:lower:]')"
+            ACTUAL_HASH="$(hash_file "dist/${ARCHIVE_NAME}" | tr '[:upper:]' '[:lower:]')"
+            if [ -n "${EXPECTED_HASH}" ] && [ "${EXPECTED_HASH}" = "${ACTUAL_HASH}" ]; then
+              VERIFY_EXIT=0
+            else
+              VERIFY_EXIT=1
+            fi
+            if [ "${VERIFY_EXIT}" -ne 0 ]; then
+              VERIFY_STATUS="failure"
+              RUN_STATUS="failure"
+            fi
+          else
+            VERIFY_STATUS="failure"
+            RUN_STATUS="failure"
+          fi
+          VERIFY_END_MS="$(now_ms)"
+
+          INSTALL_START_MS="$(now_ms)"
+          if [ "${RUN_STATUS}" = "success" ]; then
+            bash scripts/install.sh \
+              --from-file "dist/${ARCHIVE_NAME}" \
+              --checksum-file "dist/${CHECKSUM_NAME}" \
+              --install-dir "${RUNNER_TEMP}/bin" \
+              --force
+            INSTALL_EXIT=$?
+            if [ "${INSTALL_EXIT}" -ne 0 ]; then
+              INSTALL_STATUS="failure"
+              RUN_STATUS="failure"
+            fi
+          else
+            INSTALL_STATUS="skipped"
+          fi
+          INSTALL_END_MS="$(now_ms)"
+
+          SMOKE_START_MS="$(now_ms)"
+          if [ "${RUN_STATUS}" = "success" ]; then
+            export PATH="${RUNNER_TEMP}/bin:${PATH}"
+            mochi-sticky --version
+            VERSION_EXIT=$?
+            if [ "${VERSION_EXIT}" -ne 0 ]; then
+              SMOKE_STATUS="failure"
+              RUN_STATUS="failure"
+            fi
+            if [ "${RUN_STATUS}" = "success" ]; then
+              WORK_DIR="$(mktemp -d)"
+              (
+                cd "${WORK_DIR}"
+                mochi-sticky init
+                mochi-sticky board list
+              )
+              COMMAND_EXIT=$?
+              if [ "${COMMAND_EXIT}" -ne 0 ]; then
+                SMOKE_STATUS="failure"
+                RUN_STATUS="failure"
+              fi
+            fi
+          else
+            SMOKE_STATUS="skipped"
+          fi
+          SMOKE_END_MS="$(now_ms)"
+
+          UPGRADE_START_MS="$(now_ms)"
+          if [ "${RUN_STATUS}" = "success" ]; then
+            bash scripts/install.sh \
+              --from-file "dist/${ARCHIVE_NAME}" \
+              --checksum-file "dist/${CHECKSUM_NAME}" \
+              --install-dir "${RUNNER_TEMP}/bin" \
+              --force
+            UPGRADE_EXIT=$?
+            if [ "${UPGRADE_EXIT}" -ne 0 ]; then
+              UPGRADE_STATUS="failure"
+              RUN_STATUS="failure"
+            fi
+          else
+            UPGRADE_STATUS="skipped"
+          fi
+          UPGRADE_END_MS="$(now_ms)"
+
+          UNINSTALL_START_MS="$(now_ms)"
+          if [ "${RUN_STATUS}" = "success" ]; then
+            rm -f "${RUNNER_TEMP}/bin/mochi-sticky"
+            if [ -f "${RUNNER_TEMP}/bin/mochi-sticky" ]; then
+              UNINSTALL_STATUS="failure"
+              RUN_STATUS="failure"
+            fi
+          else
+            UNINSTALL_STATUS="skipped"
+          fi
+          UNINSTALL_END_MS="$(now_ms)"
+
+          FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > "${RUN_PATH}" <<JSON
+          {
+            "schema_version": 1,
+            "run_id": "${RUN_ID}",
+            "source": "github-actions",
+            "workflow": "${{ github.workflow }}",
+            "job": "smoke",
+            "status": "${RUN_STATUS}",
+            "repository": "${{ github.repository }}",
+            "run_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "ref_name": "${{ github.ref_name }}",
+            "ref_type": "tag",
+            "branch": "${{ github.event.release.target_commitish }}",
+            "tag": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "started_at": "${STARTED_AT}",
+            "finished_at": "${FINISHED_AT}",
+            "config": {
+              "go_version_file": "go.mod"
+            },
+            "platforms": [
+              {
+                "name": "${{ runner.os }}-${{ runner.arch }}",
+                "runner_os": "${{ runner.os }}",
+                "runner_arch": "${{ runner.arch }}",
+                "status": "${RUN_STATUS}",
+                "stages": [
+                  {
+                    "name": "verify",
+                    "status": "${VERIFY_STATUS}",
+                    "duration_ms": $((VERIFY_END_MS - VERIFY_START_MS))
+                  },
+                  {
+                    "name": "install",
+                    "status": "${INSTALL_STATUS}",
+                    "duration_ms": $((INSTALL_END_MS - INSTALL_START_MS))
+                  },
+                  {
+                    "name": "smoke",
+                    "status": "${SMOKE_STATUS}",
+                    "duration_ms": $((SMOKE_END_MS - SMOKE_START_MS))
+                  },
+                  {
+                    "name": "upgrade",
+                    "status": "${UPGRADE_STATUS}",
+                    "duration_ms": $((UPGRADE_END_MS - UPGRADE_START_MS))
+                  },
+                  {
+                    "name": "uninstall",
+                    "status": "${UNINSTALL_STATUS}",
+                    "duration_ms": $((UNINSTALL_END_MS - UNINSTALL_START_MS))
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+
+          if [ "${RUN_STATUS}" != "success" ]; then
+            exit 1
+          fi
+
+      - name: Smoke + telemetry (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $Version = "${{ github.ref_name }}"
-          $Commit = "${{ github.sha }}"
-          $BuildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-          $LdFlags = "-X mochi-sticky/internal/version.Version=$Version -X mochi-sticky/internal/version.Commit=$Commit -X mochi-sticky/internal/version.Date=$BuildDate"
-          go build -ldflags "$LdFlags" -o mochi-sticky.exe .
+          New-Item -Path ".sticky/release/telemetry/runs" -ItemType Directory -Force | Out-Null
 
-      - name: Smoke test --version (unix)
-        if: runner.os != 'Windows'
-        run: ./mochi-sticky --version
+          $RunId = "${{ github.run_id }}-${{ github.run_attempt }}-smoke-${{ runner.os }}-${{ runner.arch }}"
+          $RunPath = ".sticky/release/telemetry/runs/$RunId.json"
+          $StartedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
-      - name: Smoke test --version (windows)
-        if: runner.os == 'Windows'
-        run: .\\mochi-sticky.exe --version
+          $RunStatus = "success"
+          $VerifyStatus = "success"
+          $InstallStatus = "success"
+          $SmokeStatus = "success"
+          $UpgradeStatus = "success"
+          $UninstallStatus = "success"
+
+          $ArchiveName = "mochi-sticky-windows-amd64.zip"
+          $ChecksumName = "$ArchiveName.sha256"
+          $ArchivePath = "dist/$ArchiveName"
+          $ChecksumPath = "dist/$ChecksumName"
+
+          $VerifyStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          if (!(Test-Path -Path $ArchivePath) -or !(Test-Path -Path $ChecksumPath)) {
+            $VerifyStatus = "failure"
+            $RunStatus = "failure"
+          } else {
+            $expectedHash = (((Get-Content -Path $ChecksumPath -Raw).Trim()) -split "\s+")[0].ToLowerInvariant()
+            $actualHash = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($expectedHash -ne $actualHash) {
+              $VerifyStatus = "failure"
+              $RunStatus = "failure"
+            }
+          }
+          $VerifyEnd = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+
+          $InstallStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          if ($RunStatus -eq "success") {
+            & ./scripts/install.ps1 -FromFile $ArchivePath -ChecksumFile $ChecksumPath -InstallDir "$env:RUNNER_TEMP\bin" -Force
+            if ($LASTEXITCODE -ne 0) {
+              $InstallStatus = "failure"
+              $RunStatus = "failure"
+            }
+          } else {
+            $InstallStatus = "skipped"
+          }
+          $InstallEnd = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+
+          $SmokeStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          if ($RunStatus -eq "success") {
+            $env:PATH = "$env:RUNNER_TEMP\bin;$env:PATH"
+            mochi-sticky --version
+            if ($LASTEXITCODE -ne 0) {
+              $SmokeStatus = "failure"
+              $RunStatus = "failure"
+            }
+            if ($RunStatus -eq "success") {
+              $workspace = Join-Path $env:RUNNER_TEMP ("mochi-sticky-smoke-" + [Guid]::NewGuid().ToString("N"))
+              New-Item -Path $workspace -ItemType Directory -Force | Out-Null
+              Push-Location $workspace
+              try {
+                mochi-sticky init
+                if ($LASTEXITCODE -ne 0) {
+                  $SmokeStatus = "failure"
+                  $RunStatus = "failure"
+                } else {
+                  mochi-sticky board list
+                  if ($LASTEXITCODE -ne 0) {
+                    $SmokeStatus = "failure"
+                    $RunStatus = "failure"
+                  }
+                }
+              } finally {
+                Pop-Location
+              }
+            }
+          } else {
+            $SmokeStatus = "skipped"
+          }
+          $SmokeEnd = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+
+          $UpgradeStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          if ($RunStatus -eq "success") {
+            & ./scripts/install.ps1 -FromFile $ArchivePath -ChecksumFile $ChecksumPath -InstallDir "$env:RUNNER_TEMP\bin" -Force
+            if ($LASTEXITCODE -ne 0) {
+              $UpgradeStatus = "failure"
+              $RunStatus = "failure"
+            }
+          } else {
+            $UpgradeStatus = "skipped"
+          }
+          $UpgradeEnd = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+
+          $UninstallStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+          if ($RunStatus -eq "success") {
+            Remove-Item "$env:RUNNER_TEMP\bin\mochi-sticky.exe" -ErrorAction SilentlyContinue
+            if (Test-Path "$env:RUNNER_TEMP\bin\mochi-sticky.exe") {
+              $UninstallStatus = "failure"
+              $RunStatus = "failure"
+            }
+          } else {
+            $UninstallStatus = "skipped"
+          }
+          $UninstallEnd = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+
+          $FinishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $RunPayload = @{
+            schema_version = 1
+            run_id = $RunId
+            source = "github-actions"
+            workflow = "${{ github.workflow }}"
+            job = "smoke"
+            status = $RunStatus
+            repository = "${{ github.repository }}"
+            run_url = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            ref_name = "${{ github.ref_name }}"
+            ref_type = "tag"
+            branch = "${{ github.event.release.target_commitish }}"
+            tag = "${{ github.ref_name }}"
+            commit = "${{ github.sha }}"
+            started_at = $StartedAt
+            finished_at = $FinishedAt
+            config = @{
+              go_version_file = "go.mod"
+            }
+            platforms = @(
+              @{
+                name = "${{ runner.os }}-${{ runner.arch }}"
+                runner_os = "${{ runner.os }}"
+                runner_arch = "${{ runner.arch }}"
+                status = $RunStatus
+                stages = @(
+                  @{
+                    name = "verify"
+                    status = $VerifyStatus
+                    duration_ms = [math]::Max($VerifyEnd - $VerifyStart, 0)
+                  },
+                  @{
+                    name = "install"
+                    status = $InstallStatus
+                    duration_ms = [math]::Max($InstallEnd - $InstallStart, 0)
+                  },
+                  @{
+                    name = "smoke"
+                    status = $SmokeStatus
+                    duration_ms = [math]::Max($SmokeEnd - $SmokeStart, 0)
+                  },
+                  @{
+                    name = "upgrade"
+                    status = $UpgradeStatus
+                    duration_ms = [math]::Max($UpgradeEnd - $UpgradeStart, 0)
+                  },
+                  @{
+                    name = "uninstall"
+                    status = $UninstallStatus
+                    duration_ms = [math]::Max($UninstallEnd - $UninstallStart, 0)
+                  }
+                )
+              }
+            )
+          } | ConvertTo-Json -Depth 8
+          Set-Content -Path $RunPath -Value $RunPayload
+
+          if ($RunStatus -ne "success") {
+            exit 1
+          }
+
+      - name: Upload smoke telemetry artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-telemetry-smoke-${{ matrix.os }}
+          path: .sticky/release/telemetry/runs/*.json
+          if-no-files-found: ignore

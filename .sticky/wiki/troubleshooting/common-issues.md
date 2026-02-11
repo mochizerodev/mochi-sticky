@@ -21,7 +21,7 @@ Common issues and solutions for mochi-sticky.
 
 1. **Check Go version**:
    ```bash
-   go version  # Requires Go 1.21+
+   go version  # Requires Go 1.24.6+
    ```
 
 2. **Update dependencies**:
@@ -112,7 +112,10 @@ Common issues and solutions for mochi-sticky.
 
 2. **Reset to defaults**:
    ```bash
-   mochi-sticky init --force
+   # WARNING: this will remove your local tasks/boards/wiki for this repo.
+   # Back up .sticky first if you care about its contents.
+   mv .sticky ".sticky.bak-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+   mochi-sticky init
    ```
 
 3. **Check for required fields**:
@@ -148,7 +151,10 @@ Common issues and solutions for mochi-sticky.
 
 4. **Fix manually or reinitialize**:
    ```bash
-   mochi-sticky init --force
+   # WARNING: this will remove your local tasks/boards/wiki for this repo.
+   # Back up .sticky first if you care about its contents.
+   mv .sticky ".sticky.bak-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+   mochi-sticky init
    ```
 
 ## Task Management

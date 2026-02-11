@@ -1,4 +1,4 @@
-active: default
+active: wiki-improvement
 boards:
     - id: default
       name: Default

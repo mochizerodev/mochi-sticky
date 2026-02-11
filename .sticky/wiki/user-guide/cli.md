@@ -290,7 +290,9 @@ mochi-sticky adr lint
 ```bash
 mochi-sticky init
 mochi-sticky init --storage /custom/path
-mochi-sticky init --force  # Reinitialize
+# WARNING: reinitializing this way will remove local tasks/boards/wiki for this repo.
+mv .sticky ".sticky.bak-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+mochi-sticky init
 ```
 
 ### Validate Storage

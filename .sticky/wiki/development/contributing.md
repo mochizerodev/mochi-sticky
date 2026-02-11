@@ -15,7 +15,7 @@ Thank you for considering contributing to mochi-sticky! This guide will help you
 
 ### Prerequisites
 
-- **Go 1.21+** — [Download](https://go.dev/dl/)
+- **Go 1.24.6+** — [Download](https://go.dev/dl/)
 - **Git** — For version control
 - **Make** (optional) — For build automation
 

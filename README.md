@@ -9,8 +9,8 @@
 > A file-based project management tool that lives in your Git repo. Manage tasks, boards, wiki documentation, and Architecture Decision Records — all in Markdown.
 
 [![Go Version](https://img.shields.io/badge/Go-1.24.6+-00ADD8?style=flat&logo=go)](https://go.dev)
-[![CI](https://github.com/mochizero0/mochi-sticky/actions/workflows/ci.yml/badge.svg)](https://github.com/mochizero0/mochi-sticky/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/mochizero0/mochi-sticky)](https://goreportcard.com/report/github.com/mochizero0/mochi-sticky)
+[![CI](https://github.com/mochizerodev/mochi-sticky/actions/workflows/ci.yml/badge.svg)](https://github.com/mochizerodev/mochi-sticky/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/mochizerodev/mochi-sticky)](https://goreportcard.com/report/github.com/mochizerodev/mochi-sticky)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > **Status: BETA (pre-1.0)**  
@@ -57,11 +57,8 @@ This project may use AI-assisted tooling during development. All changes are rev
 ## 2. Quick Start
 
 ```bash
-# Build
-go build -o mochi-sticky
-
-# Install (optional)
-sudo cp mochi-sticky /usr/local/bin/
+# Install (Linux/macOS release installer)
+curl -fsSL https://raw.githubusercontent.com/mochizerodev/mochi-sticky/main/scripts/install.sh | bash
 
 # Initialize in your project
 cd your-project
@@ -76,6 +73,13 @@ mochi-sticky tui
 # Or use the CLI
 mochi-sticky task list --sort priority
 mochi-sticky task move T-000001 doing
+```
+
+Windows PowerShell installer:
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/mochizerodev/mochi-sticky/main/scripts/install.ps1" -OutFile "install-mochi-sticky.ps1"
+powershell -ExecutionPolicy Bypass -File .\install-mochi-sticky.ps1
 ```
 
 📖 **Built-in Wiki** — Stored under `.sticky/wiki` and viewable with `mochi-sticky wiki view home`
@@ -184,6 +188,8 @@ Root:
 - `mochi-sticky init`: scaffold `.sticky` and default board
 - `mochi-sticky hydrate`: validate storage/config and print a summary (use `--json [--pretty]` for automation)
 - `mochi-sticky tui`: launch the TUI
+- `mochi-sticky release telemetry [--limit N] [--json]`: summarize release telemetry
+- `mochi-sticky release telemetry import <file...>`: import telemetry JSON files into local storage
 
 Tasks:
 - `mochi-sticky task add "Title" [--tags tag1,tag2] [--priority 1|2|3]`
@@ -352,8 +358,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## 13. Community & Support
 
-- 🐛 **Issues** — [Report bugs or request features](https://github.com/mochizero0/mochi-sticky/issues)
-- 💬 **Discussions** — [Ask questions and share ideas](https://github.com/mochizero0/mochi-sticky/discussions)
+- 🐛 **Issues** — [Report bugs or request features](https://github.com/mochizerodev/mochi-sticky/issues)
+- 💬 **Discussions** — [Ask questions and share ideas](https://github.com/mochizerodev/mochi-sticky/discussions)
 - 📖 **Wiki** — Comprehensive documentation built-in
 
 ---
