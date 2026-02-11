@@ -264,7 +264,7 @@ jobs:
         run: |
           export TAG="${{ github.ref_name }}"
           export REPO="${{ github.repository }}"
-          python - <<PY
+          python - <<'PY'
           import os
           import re
           from pathlib import Path
@@ -601,8 +601,9 @@ jobs:
 
           $InstallStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
           if ($RunStatus -eq "success") {
-            & ./scripts/install.ps1 -FromFile $ArchivePath -ChecksumFile $ChecksumPath -InstallDir "$env:RUNNER_TEMP\bin" -Force
-            if ($LASTEXITCODE -ne 0) {
+            try {
+              & ./scripts/install.ps1 -FromFile $ArchivePath -ChecksumFile $ChecksumPath -InstallDir "$env:RUNNER_TEMP\bin" -Force
+            } catch {
               $InstallStatus = "failure"
               $RunStatus = "failure"
             }
@@ -615,7 +616,7 @@ jobs:
           if ($RunStatus -eq "success") {
             $env:PATH = "$env:RUNNER_TEMP\bin;$env:PATH"
             mochi-sticky --version
-            if ($LASTEXITCODE -ne 0) {
+            if ((-not $?) -or ($LASTEXITCODE -ne 0)) {
               $SmokeStatus = "failure"
               $RunStatus = "failure"
             }
@@ -625,12 +626,12 @@ jobs:
               Push-Location $workspace
               try {
                 mochi-sticky init
-                if ($LASTEXITCODE -ne 0) {
+                if ((-not $?) -or ($LASTEXITCODE -ne 0)) {
                   $SmokeStatus = "failure"
                   $RunStatus = "failure"
                 } else {
                   mochi-sticky board list
-                  if ($LASTEXITCODE -ne 0) {
+                  if ((-not $?) -or ($LASTEXITCODE -ne 0)) {
                     $SmokeStatus = "failure"
                     $RunStatus = "failure"
                   }
@@ -646,8 +647,9 @@ jobs:
 
           $UpgradeStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
           if ($RunStatus -eq "success") {
-            & ./scripts/install.ps1 -FromFile $ArchivePath -ChecksumFile $ChecksumPath -InstallDir "$env:RUNNER_TEMP\bin" -Force
-            if ($LASTEXITCODE -ne 0) {
+            try {
+              & ./scripts/install.ps1 -FromFile $ArchivePath -ChecksumFile $ChecksumPath -InstallDir "$env:RUNNER_TEMP\bin" -Force
+            } catch {
               $UpgradeStatus = "failure"
               $RunStatus = "failure"
             }
