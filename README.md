@@ -60,6 +60,15 @@ This project may use AI-assisted tooling during development. All changes are rev
 # Install (Linux/macOS release installer)
 curl -fsSL https://raw.githubusercontent.com/mochizerodev/mochi-sticky/main/scripts/install.sh | bash
 
+# Or install with Homebrew
+brew tap mochizerodev/tap
+brew install mochi-sticky
+
+# Quick refresh the Homebrew tap (if needed)
+brew untap mochizerodev/tap
+brew tap mochizerodev/tap
+brew upgrade mochi-sticky
+
 # Initialize in your project
 cd your-project
 mochi-sticky init
