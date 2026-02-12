@@ -124,16 +124,67 @@ brew tap mochizerodev/tap
 
 (Where `tap` is the repo name without the `homebrew-` prefix.)
 
-## 5. Updating the formula per release
+## 5. Updating the tap for each new release
 
-For each new `mochi-sticky` tag (for example `v0.6.0`):
+When a new `mochi-sticky` release is published (for example `v0.6.0`), update the tap repo formula at `mochizerodev/homebrew-tap`.
 
-1. Download the release archives for each OS/arch.
-2. Read the `.sha256` files.
-3. Update `version`, `url`, and `sha256` in the formula.
-4. Commit and push to the tap repo.
+1. Sync the tap repo locally.
 
-This can be automated.
+```bash
+git clone git@github.com:mochizerodev/homebrew-tap.git
+cd homebrew-tap
+git checkout main
+git pull
+```
+
+2. Fetch checksums for the new release assets.
+
+```bash
+TAG=v0.6.0
+BASE="https://github.com/mochizerodev/mochi-sticky/releases/download/${TAG}"
+
+curl -fsSL "${BASE}/mochi-sticky-darwin-arm64.tar.gz.sha256" | awk '{print $1}'
+curl -fsSL "${BASE}/mochi-sticky-darwin-amd64.tar.gz.sha256" | awk '{print $1}'
+curl -fsSL "${BASE}/mochi-sticky-linux-arm64.tar.gz.sha256" | awk '{print $1}'
+curl -fsSL "${BASE}/mochi-sticky-linux-amd64.tar.gz.sha256" | awk '{print $1}'
+```
+
+3. Edit `Formula/mochi-sticky.rb`.
+
+- Set `version "0.6.0"` (no leading `v`).
+- Update each `url` to `.../download/v0.6.0/...`.
+- Replace all four `sha256` values with the checksums from step 2.
+
+4. Validate the formula locally.
+
+```bash
+brew install ./Formula/mochi-sticky.rb
+brew test mochi-sticky
+mochi-sticky --version
+```
+
+5. Commit and push the tap update.
+
+```bash
+git add Formula/mochi-sticky.rb
+git commit -m "mochi-sticky v0.6.0"
+git push origin main
+```
+
+6. After the push, users get the new release with:
+
+```bash
+brew update
+brew upgrade mochi-sticky
+```
+
+Short alternative (when local tap state is stale):
+
+```bash
+brew untap mochizerodev/tap
+brew tap mochizerodev/tap
+brew upgrade mochi-sticky
+```
 
 ## 6. Automating tap updates (recommended)
 
