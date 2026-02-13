@@ -1,5 +1,5 @@
 config_version: 1
-next_id: 5
+next_id: 6
 columns:
     - key: todo
       title: Todo
