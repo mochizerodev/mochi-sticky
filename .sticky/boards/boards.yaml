@@ -25,3 +25,8 @@ boards:
       path: boards/test-board
       archived: true
       created: "2026-02-15"
+    - id: tui-v2
+      name: TUI v2
+      path: boards/tui-v2
+      archived: false
+      created: "2026-02-15"

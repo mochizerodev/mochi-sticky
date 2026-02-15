@@ -1,0 +1,296 @@
+# TUI v2
+
+This board is split from `default` task `T-000019` (kept as the original source).
+
+Goal: Rebuild the TUI into a professional, refreshing experience that is consistent across boards, tasks, wiki, and ADRs, with clear navigation, responsive layouts, and confident user feedback.
+
+Design proposal
+- Visual language: light, high-contrast panels with minimal borders, rounded corners (single-line box drawing), and a steady accent color for highlights. Inline toast bar at bottom for success/error.
+- Information architecture: introduce top-level tabs for primary features, so users always know what area they are in: `Boards` (includes tasks), `Wiki`, `ADRs`. Each tab has its own inner navigation (breadcrumbs) and remembers last focus.
+- Layout system: responsive panes and kanban columns. Wide terminals use multi-pane layouts; narrow terminals collapse to fewer panes or list views while preserving focus and selection. Status bar always visible.
+- Confirmation model: replace full confirmation pages with inline modals; ESC closes modal, ENTER confirms, preserves context. Delete remains double-confirmed; archive/unarchive uses the same modal component.
+- Board clarity: selection badge shows “BOARD” vs “TASK” context; task list only highlights the active focus; board summary card shows counts (open/doing/done/archived) and last activity.
+- Unarchive flow: board actions menu gains “Restore board” option when archived boards are visible.
+- Feedback: every mutating action shows a toast; destructive actions are red-accented; success is green; background operations show spinner in status bar.
+- Wiki upgrades: markdown rendered with headings, bullets, code blocks; left rail for TOC + filters; right pane scrolls with scroll indicator and sticky heading. Filters and sort (title/date/relevance) are visible as chips.
+
+TUI guidelines (keep consistent across screens)
+- Accent + neutrals: accent=#5FB0FF (sky), success=#42C47A, danger=#E35D5D, warn=#F1B93A, neutral panels=#1C1F26, text=#F5F7FA, muted text=#9CA3AF. Use the accent only for active focus, primary buttons, and links.
+- Density: default padding 1 cell vertical, 2 horizontal inside panels; lists keep 1-line items with 1 blank line per group header.
+- Focus rules: there is always exactly one focused pane; focused row uses accent + inverted text; hover states never fight focus. `Tab` moves pane focus; arrows move item focus; `Esc` clears inline prompts but keeps pane focus.
+- States: every actionable element has idle, focus, busy, error. Busy shows a spinner glyph (e.g., `⟳` or `...`) aligned right; error prefix `!` in danger color; success uses toast not inline banners.
+- Modals: centered box with max width 70% of viewport; includes title, body, primary/secondary actions; `Esc` cancels, `Enter` confirms primary; backdrop dims underlying content with 30% opacity equivalent.
+- Lists and forms: left-align labels, right-align shortcuts/hints; show shortcuts in muted text; reserve last column for status badges.
+- Scroll affordance: show up/down chevrons or shaded bars at top/bottom when more content is available; percent indicator in the status bar for long views.
+- Copy style: short, action-first labels (e.g., “Archive board”, “Restore board”, “Delete task”), sentence case, no trailing punctuation in button labels.
+- Accessibility: minimum contrast ratio 4.5:1; never encode meaning by color alone—pair with icon/text; do not rely on mouse interactions.
+
+Responsive behavior (explicit rules)
+- Breakpoints (by terminal width):
+  - `>= 120`: multi-pane layouts (Boards home can be 3 panes; Wiki can show nav+info+preview).
+  - `90..119`: 2 panes (nav + content). Sidebar compresses, content stays primary.
+  - `< 90`: 1 pane (single primary surface). Secondary info is moved to an overlay/popup (`i`) or footer.
+- Resizing guarantees:
+  - Preserve logical focus: active tab, selected board/task/wiki item/ADR, and active kanban column stay the same after a resize.
+  - Never lose selection: if a list/column is truncated, selection remains and the viewport scrolls to keep it visible.
+  - Keep critical controls visible: status/footer line remains, and modals stay centered within the new viewport.
+- Boards tasks kanban (3 columns):
+  - If all 3 columns fit: render Todo/Doing/Done side-by-side.
+  - If only 2 columns fit: render 2 columns and allow horizontal paging with `←/→` at the column edge (viewport shifts).
+  - If only 1 column fits: render the focused column only; `←/→` switches which column is shown.
+  - If width is too small for useful kanban (e.g., `< 70`): auto-switch to List view; user can still force kanban with `L`.
+- ADR kanban (N columns; default 5):
+  - Render as many columns as fit with a horizontal viewport; `h/l` moves active column and scrolls viewport as needed.
+  - If fewer than 2 columns fit or titles are overly truncated: auto-switch to ADR List view; user can toggle back with `L`.
+- Wiki:
+  - Wide: nav on left, info+preview on right.
+  - Narrow: nav becomes the main list; page info/preview shown via `i` (overlay) or a dedicated screen.
+
+Navigation & focus model
+- Global: `Ctrl+1` Boards tab, `Ctrl+2` Wiki tab, `Ctrl+3` ADR tab; `Ctrl+R` refresh; `/` search within the active tab; `Tab`/`Shift+Tab` move focus between panes; `Esc` closes overlay/modals; `q` backs out one level inside the current tab; `?` opens key hints.
+- Optional vim-like jumps (if no conflicts): `g b` Boards, `g w` Wiki, `g a` ADR (aliases for the tab switches).
+- Board list pane: ↑/↓ select, ENTER opens board summary, `A` add board, `U` unarchive, `D` delete (modal).
+- Task pane: ↑/↓ select, ENTER opens task detail, `N` new, `E` edit, `S` status cycle, `M` move, `F` filter, `O` sort.
+- Wiki pane: `j/k` navigate, `Enter` open pager (less), `e` edit (editor), `/` or `f` filter menu, `c` clear filters, `x` actions, `E` export md, `P` export pdf, `Ctrl+R` refresh, `b/esc` back.
+- ADR pane: `h/l` columns, `j/k` select ADR, `i` detail, `m/M` move status, `a` add, `e` editor, `x` actions, `L` toggle list/kanban (proposed), `Ctrl+R` refresh, `b/esc` back.
+
+Capability alignment (mochi-sticky today)
+- Task fields stored today: `id`, `title`, `status`, `priority`, `tags`, `created`, `depends_on`, plus markdown `content` (no per-task owner, due date, progress, or activity log).
+- Sorting: CLI/MCP support sorting by `status`, `created`, `title`, `priority`; current TUI auto-sorts tasks by readiness (deps satisfied) then priority then title (no user-driven sort toggle yet).
+- Owners: supported as board-level context (`context.owners`) and can be shown in the board sidebar/info; tasks do not have an owner field.
+- Activity: there is no built-in task timeline/history yet; any future “Activity” view requires new storage (history log) or derived file metadata. Mockups below avoid showing activity until implemented.
+- Filters: wiki filtering exists in the current TUI; task filtering/sorting UI is part of this UX rewrite scope (backed by existing `ListOptions` in the board package).
+
+ASCII mockups (proportional layout; collapses to 2/1 column on narrow terminals)
+```
+╔═ Tabs: [Boards]  Wiki  ADRs ═════════════════════════════════════════════════════════════════╗
+║ Boards ▸ Team Ops ▸ Tasks ══════════════════════════════════════════════════════════════════║
+║ Boards (focus)          │ Tasks in "Team Ops"           │ Hints / Status                    ║
+║ › Team Ops   ●5/2/1     │  [Filter: status=open]        │ Ctrl+1/2/3 tabs  Tab focus  /     ║
+║   Platform   ●3/1/0     │  [Sort: priority ↓]           │ Ctrl+R refresh  ? help            ║
+║   Archived ▸            │ ────────────────────────────  │ Toast: “Task archived” ✓          ║
+║                         │  ▸ Improve onboarding         │                                    ║
+║                         │    Status: Doing  Pri: P1     │                                    ║
+║                         │  ○ Add SLA alerts             │                                    ║
+║                         │  ○ Clean test fixtures        │                                    ║
+║                         │                               │                                    ║
+╠═════════════════════════╧═══════════════════════════════╧════════════════════════════════════╣
+║ Status: Connected ▸ Sync OK           Size: 132x40           Esc: close overlay  q: back     ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Wiki (in-app preview + external pager on Enter)
+```
+╔═ Tabs: Boards  [Wiki]  ADRs ═════════════════════════════════════════════════════════════════╗
+║ Nav (j/k)                    │ Page Info + Preview                                            ║
+║ > Getting Started             │ Title: Release Notes                                           ║
+║   - release-notes (published) │ Slug: release-notes                                            ║
+║   - onboarding (draft)        │ Section: Getting Started                                       ║
+║ > Architecture                │ Tags: release, notes                                           ║
+║   - decisions (published)     │ ---------------------------------------------------------------- ║
+║                               │ Preview (plain):                                               ║
+║                               │ # Release Notes                                                ║
+║                               │ - Faster wiki exports                                          ║
+║                               │ - Cancellable tasks                                            ║
+║                               │                                                                 ║
+╠══════════════════════════════════════════════════════════════════════════════════════════════╣
+║ enter: open pager (less)   e: edit (editor)   f: filters   E/P: export all   ctrl+r: refresh  ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Flow (how it feels to use)
+Boards tab:
+- Open `Boards` tab, select a board, land on the board summary with tasks shown as kanban columns (Todo/Doing/Done).
+- Navigate inside the kanban: arrows move within a column, left/right changes column focus; moving a ticket updates its status (and shows a toast).
+- Press `L` to toggle Kanban ↔ List view. List view is optimized for narrow terminals and fast scanning/sorting; it supports `S` (cycle status) and `M` (move with picker).
+- Enter opens task detail; edit is a modal that saves without losing your place in the kanban.
+
+Wiki tab:
+- Open `Wiki` tab, filter/search in the list, open reader; editor is a modal or dedicated view (implementation choice).
+
+ADR tab:
+- Open `ADRs` tab, browse kanban columns (status is configurable), open detail; use `m/M` to move ADRs between columns.
+- Press `L` to toggle Kanban ↔ List view (proposed) for faster scanning when many statuses/columns exist.
+
+Mockups
+Boards tab: board summary + kanban + actions
+```
+╔═ Board: Team Ops ════════════════════════════════════════════════════════════════════════════╗
+║ Stats  Todo:5  Doing:2  Done:1  Archived:3                                                   ║
+║ Filters [status:open] [tag:ux]   Sort [priority ↓]   View [Kanban]                          ║
+║ --------------------------------------------------------------------------------------------- ║
+║ Todo (focus)                    │ Doing                          │ Done                      ║
+║ ▸ T-000021 Add SLA alerts (P2)  │ ▸ T-000019 Improve TUI (P1)    │ ▸ T-000018 Prep release   ║
+║ ○ T-000023 Order tasks (P2)     │ ○ T-000014 Backup/restore (P2) │ ○ T-000012 Time tracking  ║
+║ ○ T-000004 Telemetry (P2)       │                                │                          ║
+║ --------------------------------------------------------------------------------------------- ║
+║ [←/→] column  [↑/↓] select  [Shift+←/→] move ticket  [Enter] open  [N] new  [E] edit board    ║
+║ [A] archive  [U] restore  [D] delete  [F] filter  [O] sort  [L] list view  [?] help          ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Boards tab: narrow terminal (single-column kanban; same selection preserved)
+```
+╔═ Board: Team Ops ════════════════════════════════════════════════════════════════════════════╗
+║ View [Kanban]   Column [Doing]   (←/→ switch column)                                         ║
+║ --------------------------------------------------------------------------------------------- ║
+║ ▸ T-000019 Improve TUI (P1)                                                                  ║
+║ ○ T-000014 Backup/restore (P2)                                                              ║
+║                                                                                              ║
+║ [↑/↓] select  [←/→] column  [Shift+←/→] move ticket  [L] list  [Enter] open                  ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Boards tab: list view (same board, same filters/sort)
+```
+╔═ Board: Team Ops ════════════════════════════════════════════════════════════════════════════╗
+║ Filters [status:open] [tag:ux]   Sort [priority ↓]   View [List]                             ║
+║ --------------------------------------------------------------------------------------------- ║
+║ ID       Status  Pri  Title                         Tags                Created   Deps       ║
+║ T-000021 Todo    P2   Add SLA alerts                ops, alerts          2026-02-13  -        ║
+║ T-000019 Doing   P1 ▸ TUI Improvements               tui, ux              2026-02-05  -        ║
+║ T-000012 Done    P3   Implement task time tracking   feature, analytics   2026-02-04  -        ║
+║ --------------------------------------------------------------------------------------------- ║
+║ [↑/↓] select  [Enter] open  [S] cycle status  [M] move…  [F] filter  [O] sort  [L] kanban     ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Task detail + inline actions
+```
+╔═ Task: Improve onboarding (Doing) ═══════════════════════════════════════════════════════════╗
+║ Board: Team Ops   Priority: P1   Tags: tui, ux   Created: 2026-02-05                          ║
+║ Depends on: (none)                                                                       Ready ║
+║ Description:                                                                                 ║
+║   - Simplify first-use flow                                                                  ║
+║   - Add keyboard hints                                                                      ║
+║ --------------------------------------------------------------------------------------------- ║
+║ [E] Edit  [S] Status  [M] Move  [B] Back to list  [?] Help                                  ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Task editor (modal style)
+```
+┌─ Edit Task ───────────────────────────────────────────────┐
+│ Title        Improve onboarding                           │
+│ Status       [Todo ▸]                                     │
+│ Priority     [High ▸]                                     │
+│ Tags         [ux][onboarding] [+ Add]                     │
+│ Description  ┌─────────────────────────────────────────┐  │
+│              │ Reduce form fields and add keyboard     │  │
+│              │ hints on first load.                    │  │
+│              └─────────────────────────────────────────┘  │
+│                                                          │
+│ [Enter] Save   [Ctrl+S] Save+Stay   [Esc] Cancel          │
+└──────────────────────────────────────────────────────────┘
+```
+
+Confirmation modal (delete/archive/unarchive reuse)
+```
+┌─ Confirm delete task ─────────────────────────────────────┐
+│ You are about to delete “Improve onboarding”.             │
+│ This cannot be undone.                                   │
+│                                                          │
+│ [Enter] Delete (danger)    [Esc] Cancel                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+Wiki list (filters + preview)
+```
+╔═ Wiki ═══════════════════════════════════════════════════════════════════════════════════════╗
+║ Filters: [tag:release] [status:published] [sort:title ↑]   / search: release                 ║
+║ --------------------------------------------------------------------------------------------- ║
+║ ▸ release-notes.md        Updated: 2026-02-10   Tags: release, notes                         ║
+║   architecture.md         Updated: 2026-02-01   Tags: adr, design                            ║
+║   onboarding.md           Updated: 2026-01-25   Tags: product                                ║
+║ Preview ▸ # Release Notes                                                                    ║
+║           - Faster wiki exports                                                              ║
+║           - Cancellable tasks                                                                ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+ADR main page (kanban columns)
+```
+╔═ Tabs: Boards  Wiki  [ADRs] ═════════════════════════════════════════════════════════════════╗
+║ Proposed                │ Accepted                │ Rejected                │ Deprecated            │ Superseded           ║
+║ ▸ ADR-0009 2026-02-10…  │   ADR-0007 2026-01-18…  │   ADR-0003 2026-01-09…  │   No ADRs            │   ADR-0001 2025-11…  ║
+║   ADR-0008 2026-02-03…  │   ADR-0004 2026-02-02…  │                          │                      │                      ║
+║                          │                          │                          │                      │                      ║
+╠══════════════════════════════════════════════════════════════════════════════════════════════╣
+║ h/l columns  j/k adrs  a add  i detail  m/M move  e editor  x actions  L list  ctrl+r/F5 ref ║
+║ b/esc back   q quit                                                                            ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+ADR tab: narrow terminal (auto list if kanban too tight)
+```
+╔═ Tabs: Boards  Wiki  [ADRs] ═════════════════════════════════════════════════════════════════╗
+║ View [List]  (kanban hidden: terminal too narrow)   [L] try kanban                           ║
+║ --------------------------------------------------------------------------------------------- ║
+║ ADR-0009  2026-02-10  proposed   New TUI navigation model                                    ║
+║ ADR-0007  2026-01-18  accepted   Use SQLite for local store                                  ║
+║ ADR-0003  2026-01-09  rejected   Use Redis for local store                                   ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+ADR list view (proposed)
+```
+╔═ Tabs: Boards  Wiki  [ADRs] ═════════════════════════════════════════════════════════════════╗
+║ View [List]   Filter [status:*]   Sort [date ↓]                                               ║
+║ --------------------------------------------------------------------------------------------- ║
+║ ID        Date        Status       Title                                  Tags                ║
+║ ADR-0009  2026-02-10  proposed   ▸ New TUI navigation model                tui, ux             ║
+║ ADR-0007  2026-01-18  accepted     Use SQLite for local store              storage             ║
+║ ADR-0003  2026-01-09  rejected     Use Redis for local store               storage             ║
+║ --------------------------------------------------------------------------------------------- ║
+║ [↑/↓] select  [Enter]/i detail  [m/M] move status  [a] add  [e] editor  [L] kanban            ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+ADR detail (read mode)
+```
+╔═ ADR: 0007 Use SQLite for local store ═══════════════════════════════════════════════════════╗
+║ Status: Accepted   Date: 2026-01-18   Context: offline-first TUI                             ║
+║ --------------------------------------------------------------------------------------------- ║
+║ # Decision                                                                                    ║
+║ We will use SQLite with WAL for durability and simple sync.                                  ║
+║ --------------------------------------------------------------------------------------------- ║
+║ [E] Edit ADR  [S] Status  [B] Back  [?] Help                                                 ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Navigation map (states)
+```
+Tabs:
+- Boards tab: Board list → Board summary → (kanban/list) → Task detail ↔ Task edit
+- Wiki tab: Wiki list → Wiki reader ↔ Wiki edit
+- ADR tab: ADR kanban/list → ADR detail ↔ ADR editor
+Modals (confirm/help/toasts) stack above the current state and close with Esc.
+```
+
+Justification of key decisions
+- Tabs + breadcrumbs: primary disambiguation between feature areas (Boards/Wiki/ADRs) and secondary orientation within a feature (breadcrumbs), solving the current “where am I?” confusion.
+- Toast bar + inline modals: faster feedback and fewer context switches than full confirmation pages.
+- Focus-first navigation (`Tab`/`Shift+Tab` + `g` shortcuts): consistent muscle memory across all screens.
+- Two-pane wiki: makes filters visible and ensures long pages remain readable with scroll + progress indicator.
+- Responsive columns: protects usability on small terminals while keeping a pro feel on wide screens.
+- Unified accent color + minimal borders: modern look while keeping high legibility in terminals.
+- Unarchive surfaced in board actions: closes current capability gap without adding clutter elsewhere.
+
+Implementation checklist (subtasks)
+- Build layout abstraction that supports 3/2/1 columns with resize listener and focus order preservation.
+- Add global mode ribbon + breadcrumbs component and status bar with toasts.
+- Replace confirmation pages with reusable modal component; wire delete/archive/unarchive to it.
+- Implement board context badges and active focus highlighting; add unarchive action.
+- Add wiki two-pane reader with markdown render, scroll indicator, filter/sort chips, and heading jumps.
+- Standardize keybindings (`g*`, `Tab`, `Esc`, `q`, `/`, `F`, `O`) and show `?` help overlay.
+- Add success/error toasts for all mutations; ensure cancellable operations show spinner in status bar.
+
+Acceptance
+- Consistent navigation cues (mode ribbon + breadcrumbs + focus highlight) are present on every screen.
+- Terminal resize reflows to 3/2/1 columns without losing focus or truncating critical info.
+- Mutating actions use modals (not full pages) and produce toasts; destructive actions remain double-confirmed.
+- Board actions include unarchive; archived boards are discoverable and restorable from the TUI.
+- Wiki reader renders markdown, scrolls long pages, shows filters/sort chips, and supports heading jumps.
+- Users can distinguish Board vs Task vs Wiki context at a glance and exit/return with `Esc`/`q`.
+
+Note on visualization: PNG screenshots are not auto-rendered here, but the ASCII mockups mirror the proposed layouts; we can render fresh PNGs after implementation using the TUI’s screenshot flow.
