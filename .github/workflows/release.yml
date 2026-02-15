@@ -344,21 +344,21 @@ jobs:
 
       - name: Download build bundle (linux amd64)
         if: runner.os == 'Linux'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: release-build-linux-amd64
           path: dist
 
       - name: Download build bundle (darwin amd64)
         if: runner.os == 'macOS'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: release-build-darwin-amd64
           path: dist
 
       - name: Download build bundle (windows amd64)
         if: runner.os == 'Windows'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: release-build-windows-amd64
           path: dist
