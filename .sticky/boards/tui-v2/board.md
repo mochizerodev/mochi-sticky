@@ -1,15 +1,6 @@
----
-id: T-000019
-uid: d46481b6-6abd-47bc-893e-c8662e2091de
-title: TUI Improvements
-status: todo
-priority: 2
-tags:
-    - tui
-    - ux
-created: "2026-02-05"
-depends_on: []
----
+# TUI v2
+
+This board is split from `default` task `T-000019` (kept as the original source).
 
 Goal: Rebuild the TUI into a professional, refreshing experience that is consistent across boards, tasks, wiki, and ADRs, with clear navigation, responsive layouts, and confident user feedback.
 
