@@ -1,4 +1,4 @@
-active: default
+active: test-board
 boards:
     - id: default
       name: Default
@@ -20,3 +20,8 @@ boards:
       path: boards/adr-improvement
       archived: false
       created: "2026-02-04"
+    - id: test-board
+      name: Test Board
+      path: boards/test-board
+      archived: true
+      created: "2026-02-15"

@@ -49,11 +49,6 @@ sections:
         - versioning
         - distribution
         - release-notes-template
-    - title: Roadmap
-      slug: roadmap
-      order: 0
-      pages:
-        - roadmap-oss
     - title: Troubleshooting
       slug: troubleshooting
       order: 0
