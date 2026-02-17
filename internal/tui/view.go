@@ -163,33 +163,22 @@ func (m Model) renderBoardMainPanel(panelWidth, panelHeight int) string {
 	if availableWidth < 0 {
 		availableWidth = 0
 	}
+	if m.boardUsesListViewForWidth(availableWidth) {
+		return m.renderBoardListPanel(availableWidth, panelHeight)
+	}
 	boxWidth := boxedContentWidth(availableWidth)
 
-	// Account for the kanban frame (rounded border + 1 space of horizontal padding on each side).
-	const kanbanFrameWidth = 4
-	columnAreaWidth := availableWidth
-	if columnAreaWidth > 0 {
-		columnAreaWidth -= kanbanFrameWidth
-		if columnAreaWidth < 0 {
-			columnAreaWidth = 0
-		}
-	}
-
-	if columnAreaWidth > 0 {
-		// Column width excludes padding and borders.
-		perColumnAllowance := 4 // 2 for border + 2 for padding
-		columnAreaWidth -= perColumnAllowance * len(m.columns)
-		if columnAreaWidth < 0 {
-			columnAreaWidth = 0
-		}
-	}
-
-	columnWidth := m.columnWidthFor(columnAreaWidth)
+	viewportStart, viewportCount, columnWidth := m.boardKanbanViewport(availableWidth)
 	taskIndex := buildTaskIndex(m.columns)
 	infoBox := m.renderBoardInfoBox(availableWidth)
 	infoBoxHeight := 0
 	if infoBox != "" {
 		infoBoxHeight = lipgloss.Height(infoBox)
+	}
+	viewportFooter := m.renderKanbanViewportFooter(viewportStart, viewportCount)
+	viewportFooterHeight := 0
+	if strings.TrimSpace(viewportFooter) != "" {
+		viewportFooterHeight = 1
 	}
 
 	spacing := 0
@@ -198,7 +187,7 @@ func (m Model) renderBoardMainPanel(panelWidth, panelHeight int) string {
 	}
 	contentHeightCap := 0
 	if panelHeight > 0 {
-		contentHeightCap = panelHeight - infoBoxHeight - spacing
+		contentHeightCap = panelHeight - infoBoxHeight - spacing - viewportFooterHeight
 		if contentHeightCap < 0 {
 			contentHeightCap = 0
 		}
@@ -229,9 +218,11 @@ func (m Model) renderBoardMainPanel(panelWidth, panelHeight int) string {
 		columnHeight = kanbanHeight - 2
 	}
 
-	rendered := make([]string, 0, len(m.columns))
-	for i, column := range m.columns {
-		rendered = append(rendered, m.renderColumn(column, i == m.active, columnWidth, i == len(m.columns)-1, taskIndex, columnHeight))
+	rendered := make([]string, 0, viewportCount)
+	for i := 0; i < viewportCount; i++ {
+		columnIndex := viewportStart + i
+		column := m.columns[columnIndex]
+		rendered = append(rendered, m.renderColumn(column, columnIndex == m.active, columnWidth, i == viewportCount-1, taskIndex, columnHeight))
 	}
 
 	board := lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
@@ -246,11 +237,17 @@ func (m Model) renderBoardMainPanel(panelWidth, panelHeight int) string {
 		}
 	}
 	kanbanBox := kanbanStyleSized.Render(board)
-	sections := make([]string, 0, 2)
+	sections := make([]string, 0, 3)
 	if infoBox != "" {
 		sections = append(sections, infoBox)
 	}
+	if viewportCount > 0 && viewportCount < len(m.columns) {
+		sections = append(sections, taskStyle.Render(fmt.Sprintf("Kanban viewport: %d/%d columns visible (h/l to switch)", viewportCount, len(m.columns))))
+	}
 	sections = append(sections, kanbanBox)
+	if strings.TrimSpace(viewportFooter) != "" {
+		sections = append(sections, taskStyle.Render(viewportFooter))
+	}
 	body := strings.Join(sections, "\n")
 	if panelHeight > 0 {
 		body = clampToHeight(padToHeight(body, panelHeight), panelHeight)
@@ -258,8 +255,147 @@ func (m Model) renderBoardMainPanel(panelWidth, panelHeight int) string {
 	return body
 }
 
-func (m Model) columnWidthFor(totalWidth int) int {
-	count := len(m.columns)
+func (m Model) renderKanbanViewportFooter(start, visible int) string {
+	total := len(m.columns)
+	if total == 0 || visible == 0 || visible >= total {
+		return ""
+	}
+	end := start + visible
+	if end > total {
+		end = total
+	}
+	left := " "
+	if start > 0 {
+		left = "←"
+	}
+	right := " "
+	if end < total {
+		right = "→"
+	}
+
+	activeLabel := "n/a"
+	if m.active >= 0 && m.active < total {
+		label := strings.TrimSpace(m.columns[m.active].Title)
+		if label == "" {
+			label = strings.TrimSpace(m.columns[m.active].Key)
+		}
+		if label == "" {
+			label = "column"
+		}
+		activeLabel = fmt.Sprintf("%s (%d/%d)", label, m.active+1, total)
+	}
+
+	return fmt.Sprintf("%s %d-%d/%d %s  •  Active: %s", left, start+1, end, total, right, activeLabel)
+}
+
+func (m Model) boardUsesListViewForWidth(panelWidth int) bool {
+	return m.boardListView
+}
+
+func (m Model) boardKanbanViewport(panelWidth int) (int, int, int) {
+	totalColumns := len(m.columns)
+	if totalColumns == 0 {
+		return 0, 0, 24
+	}
+	if panelWidth <= 0 {
+		return 0, totalColumns, 30
+	}
+
+	const (
+		kanbanFrameWidth   = 4
+		perColumnAllowance = 4
+		minColumnWidth     = 24
+		columnGap          = 2
+	)
+	maxVisible := totalColumns
+	for visible := totalColumns; visible >= 1; visible-- {
+		columnAreaWidth := panelWidth - kanbanFrameWidth - (perColumnAllowance * visible)
+		if columnAreaWidth <= 0 {
+			continue
+		}
+		required := (visible * minColumnWidth) + ((visible - 1) * columnGap)
+		if columnAreaWidth >= required {
+			maxVisible = visible
+			break
+		}
+		if visible == 1 {
+			maxVisible = 1
+		}
+	}
+
+	columnAreaWidth := panelWidth - kanbanFrameWidth - (perColumnAllowance * maxVisible)
+	if columnAreaWidth < 0 {
+		columnAreaWidth = 0
+	}
+	columnWidth := m.columnWidthForCount(columnAreaWidth, maxVisible)
+	start := 0
+	if maxVisible < totalColumns {
+		start = m.active - (maxVisible - 1)
+		if start < 0 {
+			start = 0
+		}
+		if start > totalColumns-maxVisible {
+			start = totalColumns - maxVisible
+		}
+	}
+	return start, maxVisible, columnWidth
+}
+
+func (m Model) renderBoardListPanel(panelWidth, panelHeight int) string {
+	lines := []string{
+		headerStyle.Render("List view"),
+		taskStyle.Render("L: toggle view"),
+		"",
+	}
+
+	taskIndex := buildTaskIndex(m.columns)
+	for columnIndex, column := range m.columns {
+		status := column.Title
+		if strings.TrimSpace(status) == "" {
+			status = column.Key
+		}
+		if strings.TrimSpace(status) == "" {
+			status = "unknown"
+		}
+		if len(column.Tasks) == 0 {
+			continue
+		}
+		lines = append(lines, headerStyle.Render(status))
+		for taskIndexInColumn, task := range column.Tasks {
+			line := fmt.Sprintf("%s [%s] P%d %s", task.ID, column.Key, effectivePriority(task.Priority), task.Title)
+			ready, unmet := board.IsReady(task, taskIndex)
+			if !ready {
+				line = fmt.Sprintf("%s ⏳ blocked by %s", line, strings.Join(unmet, ","))
+			}
+			if columnIndex == m.active && taskIndexInColumn == column.Selected {
+				lines = append(lines, selectedTask.Render(line))
+			} else {
+				lines = append(lines, taskStyle.Render(line))
+			}
+		}
+		lines = append(lines, "")
+	}
+
+	if len(lines) == 3 {
+		lines = append(lines, taskStyle.Render("No tasks"))
+	}
+
+	body := strings.Join(lines, "\n")
+	style := kanbanStyle
+	if boxWidth := boxedContentWidth(panelWidth); boxWidth > 0 {
+		style = style.Width(boxWidth)
+	}
+	if panelHeight > 0 {
+		contentHeight := max(0, panelHeight-2)
+		if contentHeight > 0 {
+			style = style.Height(contentHeight)
+			body = clampToHeight(padToHeight(body, contentHeight), contentHeight)
+		}
+	}
+	return style.Render(body)
+}
+
+func (m Model) columnWidthForCount(totalWidth, count int) int {
 	if count == 0 {
 		return 24
 	}
@@ -1366,7 +1502,7 @@ func (m Model) boardHelpText() string {
 	if m.boardFocus == focusBoards {
 		return "j/k boards • enter open board • a add board • e edit board • i board detail • x board actions • alt+1/2/3 or F1/F2/F3 tabs • tab/b tasks • ctrl+r/F5 refresh • q quit"
 	}
-	return "h/l columns • j/k tasks • a add task • x task actions • i task info • m/M move • z archive • alt+1/2/3 or F1/F2/F3 tabs • tab/b boards • ctrl+r/F5 refresh • q quit"
+	return "h/l columns • j/k tasks • L list/kanban • a add task • x task actions • i task info • m/M move • z archive • alt+1/2/3 or F1/F2/F3 tabs • tab/b boards • ctrl+r/F5 refresh • q quit"
 }
 
 func (m Model) renderModal(title, body, help string) string {

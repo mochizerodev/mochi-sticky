@@ -158,6 +158,8 @@ type Model struct {
 	pendingBoardDescEdit bool
 	pendingBoardDetail   bool
 	boardPreviewLoading  bool
+	boardListView        bool
+	boardForceKanban     bool
 	err                  error
 	activeTab            appTab
 	boardTabScreen       screen
@@ -606,6 +608,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.moveSelectedTaskBackCmdContext(ctx)
 		})
 	}
+	if msg.String() == "L" {
+		m.toggleBoardTaskView()
+		return m, nil
+	}
 	switch normalizedKey(msg) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -630,19 +636,31 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		return m.switchToTab(tabADR)
 	case "h":
+		if m.boardUsesListView() {
+			return m, nil
+		}
 		if m.active > 0 {
 			m.active--
 		}
 		return m, nil
 	case "l":
+		if m.boardUsesListView() {
+			return m, nil
+		}
 		if m.active < len(m.columns)-1 {
 			m.active++
 		}
 		return m, nil
 	case "j":
+		if m.boardUsesListView() {
+			return m.moveListSelection(1), nil
+		}
 		m = m.moveSelection(1)
 		return m, nil
 	case "k":
+		if m.boardUsesListView() {
+			return m.moveListSelection(-1), nil
+		}
 		m = m.moveSelection(-1)
 		return m, nil
 	case "enter", "i":
@@ -1101,6 +1119,60 @@ func (m Model) moveSelection(delta int) Model {
 	column.Selected += delta
 	clampSelection(column)
 	return m
+}
+
+type listTaskRef struct {
+	ColumnIndex int
+	TaskIndex   int
+}
+
+func (m Model) boardTaskRefs() []listTaskRef {
+	refs := make([]listTaskRef, 0)
+	for columnIndex, column := range m.columns {
+		for taskIndex := range column.Tasks {
+			refs = append(refs, listTaskRef{
+				ColumnIndex: columnIndex,
+				TaskIndex:   taskIndex,
+			})
+		}
+	}
+	return refs
+}
+
+func (m Model) listSelectionIndex(refs []listTaskRef) int {
+	for i, ref := range refs {
+		if ref.ColumnIndex == m.active && ref.TaskIndex == m.columns[ref.ColumnIndex].Selected {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) moveListSelection(delta int) Model {
+	refs := m.boardTaskRefs()
+	if len(refs) == 0 {
+		return m
+	}
+	current := m.listSelectionIndex(refs)
+	target := clampIndex(current+delta, len(refs))
+	ref := refs[target]
+	m.active = ref.ColumnIndex
+	m.columns[ref.ColumnIndex].Selected = ref.TaskIndex
+	return m
+}
+
+func (m Model) boardUsesListView() bool {
+	return m.boardListView
+}
+
+func (m *Model) toggleBoardTaskView() {
+	if m.boardUsesListView() {
+		m.boardListView = false
+		m.boardForceKanban = true
+		return
+	}
+	m.boardListView = true
+	m.boardForceKanban = false
 }
 
 func (m Model) moveSelectedTaskCmdContext(ctx context.Context) tea.Cmd {
