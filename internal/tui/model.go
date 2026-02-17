@@ -55,6 +55,14 @@ const (
 	screenADRDetail
 )
 
+type appTab int
+
+const (
+	tabBoards appTab = iota
+	tabWiki
+	tabADR
+)
+
 type boardFocus int
 
 const (
@@ -112,6 +120,7 @@ type Model struct {
 	activeBoard          string
 	boardDesc            string
 	boardContext         board.BoardContext
+	boardPreview         boardPreviewData
 	selectedTaskID       string
 	boardIndex           int
 	boardAction          int
@@ -148,12 +157,18 @@ type Model struct {
 	pendingRefresh       bool
 	pendingBoardDescEdit bool
 	pendingBoardDetail   bool
+	boardPreviewLoading  bool
 	err                  error
+	activeTab            appTab
+	boardTabScreen       screen
+	wikiTabScreen        screen
+	adrTabScreen         screen
 	wikiItems            []wikiNavItem
 	wikiIndex            int
 	wikiPages            map[string]wiki.Page
 	wikiStatus           string
 	wikiNav              []wiki.NavNode
+	wikiLoaded           bool
 	wikiQuery            string
 	wikiFilterTitle      string
 	wikiFilterSection    string
@@ -171,15 +186,37 @@ type Model struct {
 	adrTags              string
 	adrStatus            string
 	adrField             int
+	adrLoaded            bool
+}
+
+type boardPreviewData struct {
+	BoardID       string
+	BoardName     string
+	Archived      bool
+	Created       string
+	Total         int
+	Open          int
+	Doing         int
+	Done          int
+	ArchivedTasks int
+	LastActivity  string
+	Context       board.BoardContext
+	Loaded        bool
+	Error         string
 }
 
 // NewModel creates a TUI model backed by a repository.
 func NewModel(repo *board.Repository, boardRepo *board.BoardRepository, baseDir string) Model {
 	return Model{
-		repo:      repo,
-		boardRepo: boardRepo,
-		baseDir:   baseDir,
-		loading:   true,
+		repo:           repo,
+		boardRepo:      boardRepo,
+		baseDir:        baseDir,
+		loading:        true,
+		boardFocus:     focusBoards,
+		activeTab:      tabBoards,
+		boardTabScreen: screenBoard,
+		wikiTabScreen:  screenWiki,
+		adrTabScreen:   screenADR,
 	}
 }
 
@@ -269,6 +306,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.boards = msg.boards
 		m.activeBoard = msg.active
 		m.boardIndex = clampBoardIndex(m.boards, m.boardIndex, m.activeBoard)
+		previewCmd := m.loadBoardPreviewCmd()
 		if m.pendingRefresh {
 			m.pendingRefresh = false
 			if m.repo == nil {
@@ -284,9 +322,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.repo = newRepo
 			}
 			m.loading = true
-			return m.withInFlight(func(ctx context.Context) tea.Cmd {
+			next, cmd := m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return loadStateCmdContext(ctx, m.repo)
 			})
+			if previewCmd != nil {
+				return next, tea.Batch(cmd, previewCmd)
+			}
+			return next, cmd
 		}
 		if m.repo != nil && strings.TrimSpace(msg.active) != "" && msg.active != m.repo.BoardID() {
 			newRepo, err := board.NewRepositoryForBoardWithStorage(m.baseDir, msg.active, m.repo.StorageRoot())
@@ -296,20 +338,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.repo = newRepo
 			m.loading = true
-			return m.withInFlight(func(ctx context.Context) tea.Cmd {
+			next, cmd := m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return loadStateCmdContext(ctx, m.repo)
 			})
+			if previewCmd != nil {
+				return next, tea.Batch(cmd, previewCmd)
+			}
+			return next, cmd
 		}
-		return m, nil
+		return m, previewCmd
 	case boardActionMsg:
 		m = m.cancelInFlight()
 		m.boards = msg.boards
 		m.activeBoard = msg.active
 		m.boardIndex = clampBoardIndex(m.boards, m.boardIndex, m.activeBoard)
+		previewCmd := m.loadBoardPreviewCmd()
 		returnToBoard := msg.returnToBoard || m.boardCommandReturn
 		if returnToBoard {
 			m.screen = screenBoard
-			if m.sidebarWidth() > 0 && m.boardCommandReturn {
+			if (m.sidebarWidth() > 0 || (m.width > 0 && m.width < 90)) && m.boardCommandReturn {
 				m.boardFocus = focusBoards
 			}
 		}
@@ -326,10 +373,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.repo = newRepo
 			m.loading = true
-			return m.withInFlight(func(ctx context.Context) tea.Cmd {
+			next, cmd := m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return loadStateCmdContext(ctx, m.repo)
 			})
+			if previewCmd != nil {
+				return next, tea.Batch(cmd, previewCmd)
+			}
+			return next, cmd
 		}
+		return m, previewCmd
+	case boardPreviewMsg:
+		if msg.preview.BoardID != m.selectedBoardID() {
+			return m, nil
+		}
+		m.boardPreviewLoading = false
+		if strings.TrimSpace(msg.preview.BoardName) == "" {
+			msg.preview.BoardName = m.boardPreview.BoardName
+		}
+		msg.preview.Archived = m.boardPreview.Archived
+		if strings.TrimSpace(msg.preview.Created) == "" {
+			msg.preview.Created = m.boardPreview.Created
+		}
+		m.boardPreview = msg.preview
 		return m, nil
 	case statusUpdatedMsg:
 		m = m.cancelInFlight()
@@ -339,6 +404,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.cancelInFlight()
 		m.wikiNav = msg.nav
 		m.wikiPages = msg.pages
+		m.wikiLoaded = true
 		m.applyWikiFilters()
 		m.loading = false
 		m.loadingMessage = ""
@@ -360,6 +426,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.cancelInFlight()
 		m.adrStatusColumns = msg.columns
 		m.adrColumns = buildADRColumns(msg.columns, msg.adrs)
+		m.adrLoaded = true
 		m.loading = false
 		m.loadingMessage = ""
 		if m.adrActive >= len(m.adrColumns) {
@@ -411,6 +478,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if target, ok := tabFromKey(msg, m.screen); ok {
+		return m.switchToTab(target)
+	}
+
 	switch m.screen {
 	case screenBoardActions:
 		return m.handleBoardActionsKey(msg)
@@ -453,7 +524,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 	}
 
-	if m.boardFocus == focusBoards && m.sidebarWidth() > 0 {
+	boardListVisible := m.boardFocus == focusBoards && (m.sidebarWidth() > 0 || (m.width > 0 && m.width < 90))
+	if boardListVisible {
 		switch normalizedKey(msg) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -463,28 +535,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "ctrl+r", "f5":
 			return m.startRefresh()
 		case "w":
-			m.screen = screenWiki
-			m.loading = true
-			m.loadingMessage = "Loading wiki..."
-			return m.withInFlight(func(ctx context.Context) tea.Cmd {
-				return loadWikiCmdContext(ctx, m.wikiRoot())
-			})
+			return m.switchToTab(tabWiki)
 		case "d":
-			m.screen = screenADR
-			m.loading = true
-			m.loadingMessage = "Loading ADRs..."
-			return m.withInFlight(func(ctx context.Context) tea.Cmd {
-				return loadADRCmdContext(ctx, m.adrRoot())
-			})
+			return m.switchToTab(tabADR)
 		case "j":
 			m.boardIndex++
 			m.boardIndex = clampIndex(m.boardIndex, len(m.boards))
-			return m, nil
+			return m, m.loadBoardPreviewCmd()
 		case "k":
 			m.boardIndex--
 			m.boardIndex = clampIndex(m.boardIndex, len(m.boards))
+			return m, m.loadBoardPreviewCmd()
+		case "enter":
+			if board, ok := m.selectedBoard(); ok {
+				m.boardFocus = focusKanban
+				if board.ID == m.activeBoard {
+					return m, nil
+				}
+				return m.withInFlight(func(ctx context.Context) tea.Cmd {
+					return boardUseCmdContext(ctx, m.boardRepo, board.ID)
+				})
+			}
 			return m, nil
-		case "enter", "u":
+		case "u":
 			if board, ok := m.selectedBoard(); ok {
 				return m.withInFlight(func(ctx context.Context) tea.Cmd {
 					return boardUseCmdContext(ctx, m.boardRepo, board.ID)
@@ -537,34 +610,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "tab":
-		if m.sidebarWidth() > 0 {
+		if m.sidebarWidth() > 0 || (m.width > 0 && m.width < 90) {
 			m.boardFocus = focusBoards
 			m.boardIndex = clampBoardIndex(m.boards, m.boardIndex, m.activeBoard)
-			return m, nil
+			return m, m.loadBoardPreviewCmd()
 		}
 		return m, nil
 	case "b":
-		if m.sidebarWidth() > 0 {
+		if m.sidebarWidth() > 0 || (m.width > 0 && m.width < 90) {
 			m.boardFocus = focusBoards
 			m.boardIndex = clampBoardIndex(m.boards, m.boardIndex, m.activeBoard)
+			return m, m.loadBoardPreviewCmd()
 		}
 		return m, nil
 	case "ctrl+r", "f5":
 		return m.startRefresh()
 	case "w":
-		m.screen = screenWiki
-		m.loading = true
-		m.loadingMessage = "Loading wiki..."
-		return m.withInFlight(func(ctx context.Context) tea.Cmd {
-			return loadWikiCmdContext(ctx, m.wikiRoot())
-		})
+		return m.switchToTab(tabWiki)
 	case "d":
-		m.screen = screenADR
-		m.loading = true
-		m.loadingMessage = "Loading ADRs..."
-		return m.withInFlight(func(ctx context.Context) tea.Cmd {
-			return loadADRCmdContext(ctx, m.adrRoot())
-		})
+		return m.switchToTab(tabADR)
 	case "h":
 		if m.active > 0 {
 			m.active--
@@ -638,6 +702,10 @@ type boardActionMsg struct {
 	active        string
 	reloadTasks   bool
 	returnToBoard bool
+}
+
+type boardPreviewMsg struct {
+	preview boardPreviewData
 }
 
 type statusUpdatedMsg struct {
@@ -716,6 +784,69 @@ func loadBoardsCmdContext(ctx context.Context, repo *board.BoardRepository) tea.
 			return errMsg{err: err}
 		}
 		return boardStateMsg{boards: boards, active: active}
+	}
+}
+
+func loadBoardPreviewCmdContext(ctx context.Context, baseDir, storageRoot, boardID string) tea.Cmd {
+	return func() tea.Msg {
+		trimmedID := strings.TrimSpace(boardID)
+		preview := boardPreviewData{
+			BoardID: trimmedID,
+		}
+		if trimmedID == "" {
+			return boardPreviewMsg{preview: preview}
+		}
+		repo, err := board.NewRepositoryForBoardWithStorage(baseDir, trimmedID, storageRoot)
+		if err != nil {
+			preview.Error = err.Error()
+			return boardPreviewMsg{preview: preview}
+		}
+		config, err := repo.LoadConfigContext(ctx)
+		if err != nil {
+			preview.Error = err.Error()
+			return boardPreviewMsg{preview: preview}
+		}
+		tasks, err := repo.GetAllTasksContext(ctx)
+		if err != nil {
+			preview.Error = err.Error()
+			return boardPreviewMsg{preview: preview}
+		}
+		archived, err := repo.ListArchivedTasksContext(ctx)
+		if err != nil {
+			preview.Error = err.Error()
+			return boardPreviewMsg{preview: preview}
+		}
+
+		total := len(tasks)
+		doing := 0
+		done := 0
+		lastActivity := ""
+		for _, task := range tasks {
+			key := strings.ToLower(strings.TrimSpace(task.Status))
+			switch key {
+			case "doing", "in-progress", "in_progress":
+				doing++
+			case "done":
+				done++
+			}
+			created := task.Created.Time
+			if !created.IsZero() && (lastActivity == "" || created.Format("2006-01-02") > lastActivity) {
+				lastActivity = created.Format("2006-01-02")
+			}
+		}
+		if lastActivity == "" {
+			lastActivity = "n/a"
+		}
+
+		preview.Total = total
+		preview.Open = total - done
+		preview.Doing = doing
+		preview.Done = done
+		preview.ArchivedTasks = len(archived)
+		preview.LastActivity = lastActivity
+		preview.Context = config.Context
+		preview.Loaded = true
+		return boardPreviewMsg{preview: preview}
 	}
 }
 
@@ -1282,6 +1413,40 @@ func (m Model) selectedBoard() (board.Board, bool) {
 	return m.boards[m.boardIndex], true
 }
 
+func (m Model) selectedBoardID() string {
+	selected, ok := m.selectedBoard()
+	if !ok {
+		return ""
+	}
+	return selected.ID
+}
+
+func (m *Model) loadBoardPreviewCmd() tea.Cmd {
+	selected, ok := m.selectedBoard()
+	if !ok {
+		m.boardPreview = boardPreviewData{}
+		m.boardPreviewLoading = false
+		return nil
+	}
+	preview := boardPreviewData{
+		BoardID:   selected.ID,
+		BoardName: selected.Name,
+		Archived:  selected.Archived,
+	}
+	if !selected.Created.IsZero() {
+		preview.Created = selected.Created.Format("2006-01-02")
+	}
+	m.boardPreview = preview
+	m.boardPreviewLoading = true
+	if m.repo == nil {
+		m.boardPreviewLoading = false
+		preview.Error = "repository unavailable"
+		m.boardPreview = preview
+		return nil
+	}
+	return loadBoardPreviewCmdContext(context.Background(), m.baseDir, m.repo.StorageRoot(), selected.ID)
+}
+
 func clampBoardIndex(boards []board.Board, current int, active string) int {
 	if len(boards) == 0 {
 		return 0
@@ -1670,6 +1835,126 @@ func normalizedKey(msg tea.KeyMsg) string {
 		return "l"
 	default:
 		return key
+	}
+}
+
+func tabFromKey(msg tea.KeyMsg, current screen) (appTab, bool) {
+	switch normalizedKey(msg) {
+	case "ctrl+1":
+		return tabBoards, true
+	case "ctrl+2":
+		return tabWiki, true
+	case "ctrl+3":
+		return tabADR, true
+	case "alt+1", "f1":
+		return tabBoards, true
+	case "alt+2", "f2":
+		return tabWiki, true
+	case "alt+3", "f3":
+		return tabADR, true
+	case "1":
+		if !isTextEntryScreen(current) {
+			return tabBoards, true
+		}
+	case "2":
+		if !isTextEntryScreen(current) {
+			return tabWiki, true
+		}
+	case "3":
+		if !isTextEntryScreen(current) {
+			return tabADR, true
+		}
+	default:
+		return tabBoards, false
+	}
+	return tabBoards, false
+}
+
+func isTextEntryScreen(current screen) bool {
+	switch current {
+	case screenBoardEdit, screenTaskCreate, screenTaskEdit, screenWikiFilter, screenADRCreate:
+		return true
+	default:
+		return false
+	}
+}
+
+func inferTabFromScreen(current screen, confirm confirmAction) appTab {
+	switch current {
+	case screenWiki, screenWikiActions, screenWikiFilter, screenWikiFilterMenu:
+		return tabWiki
+	case screenADR, screenADRActions, screenADRStatusPicker, screenADRCreate, screenADRDetail:
+		return tabADR
+	case screenConfirm:
+		if confirm == confirmDeleteADR {
+			return tabADR
+		}
+		return tabBoards
+	default:
+		return tabBoards
+	}
+}
+
+func (m *Model) rememberTabScreen(tab appTab) {
+	switch tab {
+	case tabWiki:
+		m.wikiTabScreen = m.screen
+	case tabADR:
+		m.adrTabScreen = m.screen
+	default:
+		m.boardTabScreen = m.screen
+	}
+}
+
+func (m Model) switchToTab(target appTab) (tea.Model, tea.Cmd) {
+	source := inferTabFromScreen(m.screen, m.confirmAction)
+	m.rememberTabScreen(source)
+	if target == source {
+		m.activeTab = source
+		return m, nil
+	}
+
+	m = m.cancelInFlight()
+	m.activeTab = target
+	m.loading = false
+	m.loadingMessage = ""
+	switch target {
+	case tabWiki:
+		if m.wikiTabScreen == 0 {
+			m.wikiTabScreen = screenWiki
+		}
+		m.screen = m.wikiTabScreen
+		if !m.wikiLoaded {
+			m.screen = screenWiki
+			m.wikiTabScreen = screenWiki
+			m.loading = true
+			m.loadingMessage = "Loading wiki..."
+			return m.withInFlight(func(ctx context.Context) tea.Cmd {
+				return loadWikiCmdContext(ctx, m.wikiRoot())
+			})
+		}
+		return m, nil
+	case tabADR:
+		if m.adrTabScreen == 0 {
+			m.adrTabScreen = screenADR
+		}
+		m.screen = m.adrTabScreen
+		if !m.adrLoaded {
+			m.screen = screenADR
+			m.adrTabScreen = screenADR
+			m.loading = true
+			m.loadingMessage = "Loading ADRs..."
+			return m.withInFlight(func(ctx context.Context) tea.Cmd {
+				return loadADRCmdContext(ctx, m.adrRoot())
+			})
+		}
+		return m, nil
+	default:
+		if inferTabFromScreen(m.boardTabScreen, m.confirmAction) != tabBoards {
+			m.boardTabScreen = screenBoard
+		}
+		m.screen = m.boardTabScreen
+		return m, nil
 	}
 }
 

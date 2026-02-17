@@ -1,4 +1,4 @@
-active: test-board
+active: board-improvement
 boards:
     - id: default
       name: Default

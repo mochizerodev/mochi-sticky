@@ -358,8 +358,7 @@ func (m Model) handleADRKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc", "q", "b":
-		m.screen = screenBoard
-		return m, nil
+		return m.switchToTab(tabBoards)
 	case "ctrl+r", "f5":
 		m.captureADRSelection()
 		m.loading = true

@@ -296,9 +296,7 @@ func (m Model) handleWikiKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch normalizedKey(msg) {
 	case "esc", "q", "b":
-		m = m.cancelInFlight()
-		m.screen = screenBoard
-		return m, nil
+		return m.switchToTab(tabBoards)
 	case "ctrl+r", "f5":
 		m = m.cancelInFlight()
 		ctx, cancel := context.WithCancel(context.Background())
