@@ -56,6 +56,12 @@ func (m Model) View() string {
 		return m.viewBoardEdit()
 	case screenBoardDetail:
 		return m.viewBoardDetail()
+	case screenBoardFilter:
+		return m.viewBoardFilter()
+	case screenBoardFilterMenu:
+		return m.viewBoardFilterMenu()
+	case screenBoardSortMenu:
+		return m.viewBoardSortMenu()
 	case screenConfirm:
 		return m.viewConfirm()
 	case screenTaskActions:
@@ -115,9 +121,9 @@ func (m Model) renderBoardScreen(helpOverride string) string {
 	switch {
 	case availableWidth >= 120:
 		const (
-			leftWidth  = 26
-			gap        = 1
-			minCenter  = 36
+			leftWidth = 26
+			gap       = 1
+			minCenter = 36
 		)
 		if availableWidth < leftWidth+minCenter+gap {
 			return m.frame(header, m.renderBoardTwoPane(availableWidth, contentHeight), help)
@@ -342,47 +348,79 @@ func (m Model) boardKanbanViewport(panelWidth int) (int, int, int) {
 }
 
 func (m Model) renderBoardListPanel(panelWidth, panelHeight int) string {
+	entries := m.boardListEntries()
+	filterSummary := m.boardFilterSummary()
+	sortSummary := m.boardSortSummary()
+
 	lines := []string{
 		headerStyle.Render("List view"),
-		taskStyle.Render("L: toggle view"),
+		taskStyle.Render(fmt.Sprintf("Filters [%s]   Sort [%s]   View [List]", filterSummary, sortSummary)),
+		taskStyle.Render("F: filters  O: sort  L: kanban"),
 		"",
 	}
 
-	taskIndex := buildTaskIndex(m.columns)
-	for columnIndex, column := range m.columns {
-		status := column.Title
-		if strings.TrimSpace(status) == "" {
-			status = column.Key
-		}
-		if strings.TrimSpace(status) == "" {
-			status = "unknown"
-		}
-		if len(column.Tasks) == 0 {
-			continue
-		}
-		lines = append(lines, headerStyle.Render(status))
-		for taskIndexInColumn, task := range column.Tasks {
-			line := fmt.Sprintf("%s [%s] P%d %s", task.ID, column.Key, effectivePriority(task.Priority), task.Title)
-			ready, unmet := board.IsReady(task, taskIndex)
-			if !ready {
-				line = fmt.Sprintf("%s ⏳ blocked by %s", line, strings.Join(unmet, ","))
-			}
-			if columnIndex == m.active && taskIndexInColumn == column.Selected {
-				lines = append(lines, selectedTask.Render(line))
-			} else {
-				lines = append(lines, taskStyle.Render(line))
-			}
-		}
-		lines = append(lines, "")
+	boxWidth := boxedContentWidth(panelWidth)
+	if boxWidth <= 0 {
+		boxWidth = 96
 	}
+	idW := 8
+	statusW := 8
+	priW := 3
+	tagsW := 14
+	createdW := 10
+	depsW := 12
+	fixed := idW + statusW + priW + tagsW + createdW + depsW + (6 * 3)
+	titleW := boxWidth - fixed
+	if titleW < 18 {
+		titleW = 18
+	}
+	header := fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s %-*s", idW, "ID", statusW, "Status", priW, "Pri", titleW, "Title", tagsW, "Tags", createdW, "Created", depsW, "Deps")
+	lines = append(lines, headerStyle.Render(fitText(header, boxWidth)))
 
-	if len(lines) == 3 {
+	if len(entries) == 0 {
 		lines = append(lines, taskStyle.Render("No tasks"))
+	} else {
+		taskIndex := buildTaskIndex(m.columns)
+		for _, entry := range entries {
+			task := entry.Task
+			status := strings.TrimSpace(task.Status)
+			if status == "" {
+				status = "-"
+			}
+			priority := fmt.Sprintf("P%d", effectivePriority(task.Priority))
+			title := fitText(strings.TrimSpace(task.Title), titleW)
+			tags := "-"
+			if len(task.Tags) > 0 {
+				tags = strings.Join(task.Tags, ",")
+			}
+			tags = fitText(tags, tagsW)
+			created := "-"
+			if !task.Created.IsZero() {
+				created = task.Created.Format("2006-01-02")
+			}
+			deps := "-"
+			if len(task.DependsOn) > 0 {
+				deps = strings.Join(task.DependsOn, ",")
+			}
+			ready, _ := board.IsReady(task, taskIndex)
+			if !ready && deps == "-" {
+				deps = "blocked"
+			}
+			deps = fitText(deps, depsW)
+
+			row := fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s %-*s", idW, fitText(task.ID, idW), statusW, fitText(status, statusW), priW, fitText(priority, priW), titleW, title, tagsW, tags, createdW, fitText(created, createdW), depsW, deps)
+			row = fitText(row, boxWidth)
+			if entry.Ref.ColumnIndex == m.active && entry.Ref.TaskIndex == m.columns[entry.Ref.ColumnIndex].Selected {
+				lines = append(lines, selectedTask.Render(row))
+			} else {
+				lines = append(lines, taskStyle.Render(row))
+			}
+		}
 	}
 
 	body := strings.Join(lines, "\n")
 	style := kanbanStyle
-	if boxWidth := boxedContentWidth(panelWidth); boxWidth > 0 {
+	if boxWidth > 0 {
 		style = style.Width(boxWidth)
 	}
 	if panelHeight > 0 {
@@ -393,6 +431,35 @@ func (m Model) renderBoardListPanel(panelWidth, panelHeight int) string {
 		}
 	}
 	return style.Render(body)
+}
+
+func (m Model) boardFilterSummary() string {
+	parts := make([]string, 0, 3)
+	if strings.TrimSpace(m.boardFilterStatus) != "" {
+		parts = append(parts, "status:"+m.boardFilterStatus)
+	}
+	if strings.TrimSpace(m.boardFilterTitle) != "" {
+		parts = append(parts, "title:"+m.boardFilterTitle)
+	}
+	if len(m.boardFilterTags) > 0 {
+		parts = append(parts, "tags:"+strings.Join(m.boardFilterTags, ","))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, " ")
+}
+
+func (m Model) boardSortSummary() string {
+	sortBy := strings.TrimSpace(m.boardSortBy)
+	if sortBy == "" {
+		sortBy = "readiness"
+	}
+	dir := "asc"
+	if m.boardSortDesc {
+		dir = "desc"
+	}
+	return sortBy + " " + dir
 }
 
 func (m Model) columnWidthForCount(totalWidth, count int) int {
@@ -738,6 +805,59 @@ func (m Model) viewBoardDetail() string {
 	body := strings.Join(lines, "\n")
 	help := "e edit • ctrl+r/F5 refresh • x actions • b boards • esc back"
 	return m.frame(title, body, help)
+}
+
+func (m Model) viewBoardFilter() string {
+	title := "Board Filter"
+	prompt := "Status filter"
+	switch m.boardFilterMode {
+	case boardListFilterTitle:
+		prompt = "Title filter"
+	case boardListFilterTags:
+		prompt = "Tag filter (comma-separated)"
+	}
+	lines := []string{
+		headerStyle.Render(prompt),
+		"",
+		taskStyle.Render(m.boardFilterInput),
+	}
+	body := strings.Join(lines, "\n")
+	help := "enter apply • esc cancel"
+	return m.renderModalOverlay(title, body, help)
+}
+
+func (m Model) viewBoardFilterMenu() string {
+	items := boardFilterMenuItems()
+	lines := make([]string, 0, len(items)+2)
+	lines = append(lines, headerStyle.Render("Board Filters"), "")
+	for i, item := range items {
+		if i == m.boardListAction {
+			lines = append(lines, selectedTask.Render(item.label))
+			continue
+		}
+		lines = append(lines, taskStyle.Render(item.label))
+	}
+	body := strings.Join(lines, "\n")
+	help := "j/k move • enter select • esc back"
+	return m.renderModalOverlay("Board Filters", body, help)
+}
+
+func (m Model) viewBoardSortMenu() string {
+	items := boardSortMenuItems()
+	lines := make([]string, 0, len(items)+3)
+	lines = append(lines, headerStyle.Render("Board Sort"), "")
+	lines = append(lines, taskStyle.Render("Current: "+m.boardSortSummary()))
+	lines = append(lines, "")
+	for i, item := range items {
+		if i == m.boardListAction {
+			lines = append(lines, selectedTask.Render(item.label))
+			continue
+		}
+		lines = append(lines, taskStyle.Render(item.label))
+	}
+	body := strings.Join(lines, "\n")
+	help := "j/k move • enter select • esc back"
+	return m.renderModalOverlay("Board Sort", body, help)
 }
 
 func (m Model) viewConfirm() string {
@@ -1502,7 +1622,7 @@ func (m Model) boardHelpText() string {
 	if m.boardFocus == focusBoards {
 		return "j/k boards • enter open board • a add board • e edit board • i board detail • x board actions • alt+1/2/3 or F1/F2/F3 tabs • tab/b tasks • ctrl+r/F5 refresh • q quit"
 	}
-	return "h/l columns • j/k tasks • L list/kanban • a add task • x task actions • i task info • m/M move • z archive • alt+1/2/3 or F1/F2/F3 tabs • tab/b boards • ctrl+r/F5 refresh • q quit"
+	return "h/l columns • j/k tasks • F filters • O sort • L list/kanban • a add task • x task actions • i task info • m/M move • z archive • alt+1/2/3 or F1/F2/F3 tabs • tab/b boards • ctrl+r/F5 refresh • q quit"
 }
 
 func (m Model) renderModal(title, body, help string) string {
@@ -1683,6 +1803,33 @@ func sliceANSI(line string, start, end int) string {
 	}
 
 	return buf.String()
+}
+
+func fitText(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "-"
+	}
+	if runewidth.StringWidth(trimmed) <= width {
+		return trimmed
+	}
+	if width <= 1 {
+		return "…"
+	}
+	var buf strings.Builder
+	current := 0
+	for _, r := range trimmed {
+		rw := runewidth.RuneWidth(r)
+		if current+rw >= width {
+			break
+		}
+		buf.WriteRune(r)
+		current += rw
+	}
+	return strings.TrimSpace(buf.String()) + "…"
 }
 
 func padToHeight(body string, height int) string {

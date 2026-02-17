@@ -37,6 +37,9 @@ const (
 	screenBoardActions
 	screenBoardEdit
 	screenBoardDetail
+	screenBoardFilter
+	screenBoardFilterMenu
+	screenBoardSortMenu
 	screenConfirm
 	screenTaskActions
 	screenStatusPicker
@@ -84,6 +87,14 @@ const (
 	editTags
 	editDescription
 	editPriority
+)
+
+type boardListFilterMode int
+
+const (
+	boardListFilterStatus boardListFilterMode = iota
+	boardListFilterTitle
+	boardListFilterTags
 )
 
 type confirmAction int
@@ -160,6 +171,14 @@ type Model struct {
 	boardPreviewLoading  bool
 	boardListView        bool
 	boardForceKanban     bool
+	boardListAction      int
+	boardFilterMode      boardListFilterMode
+	boardFilterInput     string
+	boardFilterStatus    string
+	boardFilterTitle     string
+	boardFilterTags      []string
+	boardSortBy          string
+	boardSortDesc        bool
 	err                  error
 	activeTab            appTab
 	boardTabScreen       screen
@@ -491,6 +510,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleBoardEditKey(msg)
 	case screenBoardDetail:
 		return m.handleBoardDetailKey(msg)
+	case screenBoardFilter:
+		return m.handleBoardFilterKey(msg)
+	case screenBoardFilterMenu:
+		return m.handleBoardFilterMenuKey(msg)
+	case screenBoardSortMenu:
+		return m.handleBoardSortMenuKey(msg)
 	case screenConfirm:
 		return m.handleConfirmKey(msg)
 	case screenTaskActions:
@@ -685,6 +710,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return loadArchiveCmdContext(ctx, m.repo)
 		})
+	case "f":
+		m.screen = screenBoardFilterMenu
+		m.boardListAction = 0
+		return m, nil
+	case "o":
+		m.screen = screenBoardSortMenu
+		m.boardListAction = 0
+		return m, nil
 	case "a":
 		status := ""
 		if len(m.columns) > 0 {
@@ -697,6 +730,85 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.taskField = 0
 		m.screen = screenTaskCreate
 		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m Model) handleBoardFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.screen = screenBoard
+		m.boardFilterInput = ""
+		return m, nil
+	case tea.KeyEnter:
+		input := strings.TrimSpace(m.boardFilterInput)
+		switch m.boardFilterMode {
+		case boardListFilterStatus:
+			m.boardFilterStatus = input
+		case boardListFilterTitle:
+			m.boardFilterTitle = input
+		case boardListFilterTags:
+			m.boardFilterTags = parseFilterTags(input)
+		}
+		m.boardFilterInput = ""
+		m.screen = screenBoard
+		return m, nil
+	case tea.KeyBackspace, tea.KeyDelete:
+		if len(m.boardFilterInput) > 0 {
+			m.boardFilterInput = m.boardFilterInput[:len(m.boardFilterInput)-1]
+		}
+		return m, nil
+	case tea.KeySpace:
+		m.boardFilterInput += " "
+		return m, nil
+	default:
+		if msg.Type == tea.KeyRunes {
+			m.boardFilterInput += string(msg.Runes)
+		}
+		return m, nil
+	}
+}
+
+func (m Model) handleBoardFilterMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch normalizedKey(msg) {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc":
+		m.screen = screenBoard
+		return m, nil
+	case "j":
+		m.boardListAction++
+		m.boardListAction = clampIndex(m.boardListAction, len(boardFilterMenuItems()))
+		return m, nil
+	case "k":
+		m.boardListAction--
+		m.boardListAction = clampIndex(m.boardListAction, len(boardFilterMenuItems()))
+		return m, nil
+	case "enter":
+		return m.handleBoardFilterMenuSelection(boardFilterMenuItems())
+	default:
+		return m, nil
+	}
+}
+
+func (m Model) handleBoardSortMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch normalizedKey(msg) {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc":
+		m.screen = screenBoard
+		return m, nil
+	case "j":
+		m.boardListAction++
+		m.boardListAction = clampIndex(m.boardListAction, len(boardSortMenuItems()))
+		return m, nil
+	case "k":
+		m.boardListAction--
+		m.boardListAction = clampIndex(m.boardListAction, len(boardSortMenuItems()))
+		return m, nil
+	case "enter":
+		return m.handleBoardSortMenuSelection(boardSortMenuItems())
 	default:
 		return m, nil
 	}
@@ -1126,21 +1238,57 @@ type listTaskRef struct {
 	TaskIndex   int
 }
 
-func (m Model) boardTaskRefs() []listTaskRef {
-	refs := make([]listTaskRef, 0)
+type listTaskEntry struct {
+	Ref  listTaskRef
+	Task board.Task
+}
+
+func (m Model) boardTaskRefByID() map[string]listTaskRef {
+	refs := make(map[string]listTaskRef)
 	for columnIndex, column := range m.columns {
-		for taskIndex := range column.Tasks {
-			refs = append(refs, listTaskRef{
+		for taskIndex, task := range column.Tasks {
+			refs[task.ID] = listTaskRef{
 				ColumnIndex: columnIndex,
 				TaskIndex:   taskIndex,
-			})
+			}
 		}
 	}
 	return refs
 }
 
-func (m Model) listSelectionIndex(refs []listTaskRef) int {
-	for i, ref := range refs {
+func (m Model) boardListEntries() []listTaskEntry {
+	allTasks := make([]board.Task, 0)
+	for _, column := range m.columns {
+		allTasks = append(allTasks, column.Tasks...)
+	}
+	if len(allTasks) == 0 {
+		return nil
+	}
+
+	opts := m.boardListOptions()
+	if strings.EqualFold(opts.SortBy, "readiness") || strings.TrimSpace(opts.SortBy) == "" {
+		opts.SortBy = ""
+		allTasks = board.FilterAndSortTasks(allTasks, opts)
+		sortTasksByReadiness(allTasks, buildTaskIndex(m.columns))
+	} else {
+		allTasks = board.FilterAndSortTasks(allTasks, opts)
+	}
+
+	refByID := m.boardTaskRefByID()
+	entries := make([]listTaskEntry, 0, len(allTasks))
+	for _, task := range allTasks {
+		ref, ok := refByID[task.ID]
+		if !ok {
+			continue
+		}
+		entries = append(entries, listTaskEntry{Ref: ref, Task: task})
+	}
+	return entries
+}
+
+func (m Model) listSelectionIndex(entries []listTaskEntry) int {
+	for i, entry := range entries {
+		ref := entry.Ref
 		if ref.ColumnIndex == m.active && ref.TaskIndex == m.columns[ref.ColumnIndex].Selected {
 			return i
 		}
@@ -1149,13 +1297,13 @@ func (m Model) listSelectionIndex(refs []listTaskRef) int {
 }
 
 func (m Model) moveListSelection(delta int) Model {
-	refs := m.boardTaskRefs()
-	if len(refs) == 0 {
+	entries := m.boardListEntries()
+	if len(entries) == 0 {
 		return m
 	}
-	current := m.listSelectionIndex(refs)
-	target := clampIndex(current+delta, len(refs))
-	ref := refs[target]
+	current := m.listSelectionIndex(entries)
+	target := clampIndex(current+delta, len(entries))
+	ref := entries[target].Ref
 	m.active = ref.ColumnIndex
 	m.columns[ref.ColumnIndex].Selected = ref.TaskIndex
 	return m
@@ -1163,6 +1311,21 @@ func (m Model) moveListSelection(delta int) Model {
 
 func (m Model) boardUsesListView() bool {
 	return m.boardListView
+}
+
+func (m Model) boardListOptions() board.ListOptions {
+	sortBy := strings.TrimSpace(m.boardSortBy)
+	if sortBy == "" {
+		sortBy = "readiness"
+	}
+	return board.ListOptions{
+		Status:  strings.TrimSpace(m.boardFilterStatus),
+		Title:   strings.TrimSpace(m.boardFilterTitle),
+		Tags:    m.boardFilterTags,
+		TagMode: "any",
+		SortBy:  sortBy,
+		Desc:    m.boardSortDesc,
+	}
 }
 
 func (m *Model) toggleBoardTaskView() {
@@ -1173,6 +1336,123 @@ func (m *Model) toggleBoardTaskView() {
 	}
 	m.boardListView = true
 	m.boardForceKanban = false
+	entries := m.boardListEntries()
+	if len(entries) == 0 {
+		return
+	}
+	ref := entries[0].Ref
+	m.active = ref.ColumnIndex
+	m.columns[ref.ColumnIndex].Selected = ref.TaskIndex
+}
+
+type boardFilterMenuKind int
+
+const (
+	boardFilterMenuStatus boardFilterMenuKind = iota
+	boardFilterMenuTitle
+	boardFilterMenuTags
+	boardFilterMenuClear
+	boardFilterMenuCancel
+)
+
+type boardFilterMenuItem struct {
+	label string
+	kind  boardFilterMenuKind
+}
+
+func boardFilterMenuItems() []boardFilterMenuItem {
+	return []boardFilterMenuItem{
+		{label: "status filter", kind: boardFilterMenuStatus},
+		{label: "title filter", kind: boardFilterMenuTitle},
+		{label: "tag filter", kind: boardFilterMenuTags},
+		{label: "clear filters", kind: boardFilterMenuClear},
+		{label: "cancel", kind: boardFilterMenuCancel},
+	}
+}
+
+func (m Model) handleBoardFilterMenuSelection(items []boardFilterMenuItem) (tea.Model, tea.Cmd) {
+	if len(items) == 0 || m.boardListAction < 0 || m.boardListAction >= len(items) {
+		m.screen = screenBoard
+		return m, nil
+	}
+	item := items[m.boardListAction]
+	switch item.kind {
+	case boardFilterMenuStatus:
+		m.screen = screenBoardFilter
+		m.boardFilterMode = boardListFilterStatus
+		m.boardFilterInput = m.boardFilterStatus
+	case boardFilterMenuTitle:
+		m.screen = screenBoardFilter
+		m.boardFilterMode = boardListFilterTitle
+		m.boardFilterInput = m.boardFilterTitle
+	case boardFilterMenuTags:
+		m.screen = screenBoardFilter
+		m.boardFilterMode = boardListFilterTags
+		m.boardFilterInput = strings.Join(m.boardFilterTags, ", ")
+	case boardFilterMenuClear:
+		m.boardFilterStatus = ""
+		m.boardFilterTitle = ""
+		m.boardFilterTags = nil
+		m.screen = screenBoard
+	default:
+		m.screen = screenBoard
+	}
+	return m, nil
+}
+
+type boardSortMenuKind int
+
+const (
+	boardSortMenuReadiness boardSortMenuKind = iota
+	boardSortMenuStatus
+	boardSortMenuCreated
+	boardSortMenuTitle
+	boardSortMenuPriority
+	boardSortMenuToggleDirection
+	boardSortMenuCancel
+)
+
+type boardSortMenuItem struct {
+	label string
+	kind  boardSortMenuKind
+}
+
+func boardSortMenuItems() []boardSortMenuItem {
+	return []boardSortMenuItem{
+		{label: "sort by readiness (default)", kind: boardSortMenuReadiness},
+		{label: "sort by status", kind: boardSortMenuStatus},
+		{label: "sort by created", kind: boardSortMenuCreated},
+		{label: "sort by title", kind: boardSortMenuTitle},
+		{label: "sort by priority", kind: boardSortMenuPriority},
+		{label: "toggle asc/desc", kind: boardSortMenuToggleDirection},
+		{label: "cancel", kind: boardSortMenuCancel},
+	}
+}
+
+func (m Model) handleBoardSortMenuSelection(items []boardSortMenuItem) (tea.Model, tea.Cmd) {
+	if len(items) == 0 || m.boardListAction < 0 || m.boardListAction >= len(items) {
+		m.screen = screenBoard
+		return m, nil
+	}
+	item := items[m.boardListAction]
+	switch item.kind {
+	case boardSortMenuReadiness:
+		m.boardSortBy = "readiness"
+		m.boardSortDesc = false
+	case boardSortMenuStatus:
+		m.boardSortBy = "status"
+	case boardSortMenuCreated:
+		m.boardSortBy = "created"
+	case boardSortMenuTitle:
+		m.boardSortBy = "title"
+	case boardSortMenuPriority:
+		m.boardSortBy = "priority"
+	case boardSortMenuToggleDirection:
+		m.boardSortDesc = !m.boardSortDesc
+	default:
+	}
+	m.screen = screenBoard
+	return m, nil
 }
 
 func (m Model) moveSelectedTaskCmdContext(ctx context.Context) tea.Cmd {
@@ -1944,7 +2224,7 @@ func tabFromKey(msg tea.KeyMsg, current screen) (appTab, bool) {
 
 func isTextEntryScreen(current screen) bool {
 	switch current {
-	case screenBoardEdit, screenTaskCreate, screenTaskEdit, screenWikiFilter, screenADRCreate:
+	case screenBoardEdit, screenBoardFilter, screenTaskCreate, screenTaskEdit, screenWikiFilter, screenADRCreate:
 		return true
 	default:
 		return false
