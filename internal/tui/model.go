@@ -179,6 +179,8 @@ type Model struct {
 	boardFilterTags      []string
 	boardSortBy          string
 	boardSortDesc        bool
+	pendingSuccessToast  string
+	toastQueue           []toastMessage
 	err                  error
 	activeTab            appTab
 	boardTabScreen       screen
@@ -224,6 +226,19 @@ type boardPreviewData struct {
 	Context       board.BoardContext
 	Loaded        bool
 	Error         string
+}
+
+type toastLevel int
+
+const (
+	toastInfo toastLevel = iota
+	toastSuccess
+	toastError
+)
+
+type toastMessage struct {
+	Level   toastLevel
+	Message string
 }
 
 // NewModel creates a TUI model backed by a repository.
@@ -276,6 +291,34 @@ func (m Model) cancelInFlight() Model {
 	return m
 }
 
+func (m *Model) pushToast(level toastLevel, message string) {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return
+	}
+	m.toastQueue = append(m.toastQueue, toastMessage{Level: level, Message: trimmed})
+	const maxQueue = 3
+	if len(m.toastQueue) > maxQueue {
+		m.toastQueue = m.toastQueue[len(m.toastQueue)-maxQueue:]
+	}
+}
+
+func (m *Model) pushSuccessToast(message string) {
+	m.pushToast(toastSuccess, message)
+}
+
+func (m *Model) pushErrorToast(message string) {
+	m.pushToast(toastError, message)
+}
+
+func (m *Model) consumePendingSuccessToast() {
+	if strings.TrimSpace(m.pendingSuccessToast) == "" {
+		return
+	}
+	m.pushSuccessToast(m.pendingSuccessToast)
+	m.pendingSuccessToast = ""
+}
+
 // Update handles keyboard input and state updates.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -294,6 +337,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.boardContext = msg.context
 		m.loading = false
 		m.loadingMessage = ""
+		m.consumePendingSuccessToast()
 		if m.active >= len(m.columns) {
 			m.active = max(0, len(m.columns)-1)
 		}
@@ -382,6 +426,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.boardCommandReturn = false
+		m.consumePendingSuccessToast()
 		if msg.reloadTasks {
 			if m.repo == nil {
 				m.err = fmt.Errorf("tui: repository unavailable")
@@ -420,6 +465,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusUpdatedMsg:
 		m = m.cancelInFlight()
 		m = m.applyStatusUpdate(msg.id, msg.status)
+		m.pushSuccessToast(fmt.Sprintf("Task %s moved to %s", msg.id, msg.status))
 		return m, nil
 	case wikiStateMsg:
 		m = m.cancelInFlight()
@@ -439,8 +485,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadingMessage = ""
 		if msg.status != "" {
 			m.wikiStatus = msg.status
+			m.pushSuccessToast(msg.status)
 		} else if msg.path != "" {
 			m.wikiStatus = fmt.Sprintf("Exported to %s", msg.path)
+			m.pushSuccessToast(m.wikiStatus)
 		}
 		return m, nil
 	case adrStateMsg:
@@ -463,6 +511,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case adrStatusUpdatedMsg:
 		m = m.cancelInFlight()
 		m = m.applyADRStatusUpdate(msg.id, msg.status)
+		m.pushSuccessToast(fmt.Sprintf("ADR %s moved to %s", adr.FormatID(msg.id), msg.status))
 		return m, nil
 	case adrCreatedMsg:
 		m = m.cancelInFlight()
@@ -470,6 +519,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.loadingMessage = "Opening editor..."
 		m.screen = screenADR
+		m.pushSuccessToast(fmt.Sprintf("Created %s", adr.FormatID(msg.record.ID)))
 		return m, openADREditorCmd(m.adrRoot(), msg.record.FilePath, m.editor)
 	case errMsg:
 		m = m.cancelInFlight()
@@ -478,7 +528,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// in-flight operations (e.g., when refreshing with Ctrl+R/F5)
 		if msg.err != nil && msg.err != context.Canceled {
 			m.err = msg.err
+			m.pushErrorToast(msg.err.Error())
 		}
+		m.pendingSuccessToast = ""
 		m.loading = false
 		m.loadingMessage = ""
 		return m, nil
@@ -486,6 +538,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.cancelInFlight()
 		m.archived = msg.tasks
 		m.archiveIndex = clampIndex(m.archiveIndex, len(m.archived))
+		m.consumePendingSuccessToast()
 		if msg.reloadTasks {
 			m.loading = true
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
@@ -579,6 +632,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if board.ID == m.activeBoard {
 					return m, nil
 				}
+				m.pendingSuccessToast = fmt.Sprintf("Opened board %s", board.ID)
 				return m.withInFlight(func(ctx context.Context) tea.Cmd {
 					return boardUseCmdContext(ctx, m.boardRepo, board.ID)
 				})
@@ -586,6 +640,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "u":
 			if board, ok := m.selectedBoard(); ok {
+				m.pendingSuccessToast = fmt.Sprintf("Opened board %s", board.ID)
 				return m.withInFlight(func(ctx context.Context) tea.Cmd {
 					return boardUseCmdContext(ctx, m.boardRepo, board.ID)
 				})
@@ -1533,6 +1588,7 @@ func (m Model) handleBoardActionSelection() (tea.Model, tea.Cmd) {
 	switch boardActionItems()[m.boardAction] {
 	case "use":
 		m.boardActionFromBoard = false
+		m.pendingSuccessToast = fmt.Sprintf("Opened board %s", board.ID)
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return boardUseCmdContext(ctx, m.boardRepo, board.ID)
 		})
@@ -1617,10 +1673,12 @@ func (m Model) handleBoardEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.boardEditFromBoard = false
 		if m.editMode == editCreate {
+			m.pendingSuccessToast = fmt.Sprintf("Created board %s", name)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return boardCreateCmdContext(ctx, m.boardRepo, name)
 			})
 		}
+		m.pendingSuccessToast = fmt.Sprintf("Renamed board to %s", name)
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return boardRenameCmdContext(ctx, m.boardRepo, m.editBoardID, name)
 		})
@@ -1688,6 +1746,7 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.boardFocus = focusBoards
 			}
 			m.confirmFromBoard = false
+			m.pendingSuccessToast = fmt.Sprintf("Archived board %s", m.confirmBoard)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return boardArchiveCmdContext(ctx, m.boardRepo, m.confirmBoard)
 			})
@@ -1697,21 +1756,25 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.boardFocus = focusBoards
 			}
 			m.confirmFromBoard = false
+			m.pendingSuccessToast = fmt.Sprintf("Deleted board %s", m.confirmBoard)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return boardDeleteCmdContext(ctx, m.boardRepo, m.confirmBoard)
 			})
 		case confirmArchiveTask:
 			m.screen = screenBoard
+			m.pendingSuccessToast = fmt.Sprintf("Archived task %s", m.confirmTask)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskArchiveCmdContext(ctx, m.repo, m.confirmTask)
 			})
 		case confirmDeleteTask:
 			m.screen = screenBoard
+			m.pendingSuccessToast = fmt.Sprintf("Deleted task %s", m.confirmTask)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskDeleteCmdContext(ctx, m.repo, m.confirmTask)
 			})
 		case confirmDeleteADR:
 			m.screen = screenADR
+			m.pendingSuccessToast = fmt.Sprintf("Deleted ADR %s", adr.FormatID(m.confirmADR))
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return deleteADRCmdContext(ctx, m.adrRoot(), m.confirmADR)
 			})
@@ -2088,14 +2151,17 @@ func (m Model) handleTaskEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if input == "" {
 				return m, nil
 			}
+			m.pendingSuccessToast = fmt.Sprintf("Updated title for %s", task.ID)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskUpdateTitleCmdContext(ctx, m.repo, task.ID, input)
 			})
 		case editTags:
+			m.pendingSuccessToast = fmt.Sprintf("Updated tags for %s", task.ID)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskUpdateTagsCmdContext(ctx, m.repo, task.ID, board.ParseTags(input))
 			})
 		case editDescription:
+			m.pendingSuccessToast = fmt.Sprintf("Updated description for %s", task.ID)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskUpdateContentCmdContext(ctx, m.repo, task.ID, input)
 			})
@@ -2106,6 +2172,7 @@ func (m Model) handleTaskEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return errMsg{err: fmt.Errorf("tui: invalid priority %q", input)}
 				}
 			}
+			m.pendingSuccessToast = fmt.Sprintf("Updated priority for %s", task.ID)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskUpdatePriorityCmdContext(ctx, m.repo, task.ID, value)
 			})
@@ -2166,6 +2233,7 @@ func (m Model) handleArchiveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		task := m.archived[m.archiveIndex]
+		m.pendingSuccessToast = fmt.Sprintf("Restored task %s", task.ID)
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return restoreArchiveCmdContext(ctx, m.repo, task.ID)
 		})
@@ -2326,6 +2394,7 @@ func (m Model) handleTaskCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = screenBoard
 		m.taskTitle = ""
 		m.taskTags = ""
+		m.pendingSuccessToast = fmt.Sprintf("Created task %s", title)
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return taskCreateCmdContext(ctx, m.repo, title, status, tags, priority)
 		})

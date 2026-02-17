@@ -15,26 +15,33 @@ import (
 )
 
 var (
-	bg           = lipgloss.Color("#141821")
-	panelBg      = lipgloss.Color("#1C1F26")
-	accent       = lipgloss.Color("#5FB0FF")
-	accentSoft   = lipgloss.Color("#5FB0FF")
-	textBright   = lipgloss.Color("#F5F7FA")
-	textMuted    = lipgloss.Color("#9CA3AF")
-	borderColor  = lipgloss.Color("#334155")
-	columnBorder = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	sidebarStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	infoBoxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	kanbanStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	headerStyle  = lipgloss.NewStyle().Bold(true).Foreground(accent).Background(panelBg)
-	taskStyle    = lipgloss.NewStyle().Foreground(textBright).Background(panelBg)
-	selectedTask = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true)
-	activeBoard  = lipgloss.NewStyle().Foreground(accentSoft).Background(panelBg).Bold(true)
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).Bold(true)
-	barStyle     = lipgloss.NewStyle().Background(bg).Foreground(textBright).Bold(true).Padding(0, 1)
-	footerStyle  = lipgloss.NewStyle().Background(bg).Foreground(textMuted).Padding(0, 1)
-	tabActive    = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true).Padding(0, 1)
-	tabInactive  = lipgloss.NewStyle().Foreground(textMuted).Padding(0, 1)
+	bg                = lipgloss.Color("#141821")
+	panelBg           = lipgloss.Color("#1C1F26")
+	accent            = lipgloss.Color("#5FB0FF")
+	accentSoft        = lipgloss.Color("#5FB0FF")
+	textBright        = lipgloss.Color("#F5F7FA")
+	textMuted         = lipgloss.Color("#9CA3AF")
+	successColor      = lipgloss.Color("#42C47A")
+	dangerColor       = lipgloss.Color("#E35D5D")
+	infoColor         = accentSoft
+	borderColor       = lipgloss.Color("#334155")
+	columnBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	sidebarStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	infoBoxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	kanbanStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	headerStyle       = lipgloss.NewStyle().Bold(true).Foreground(accent).Background(panelBg)
+	taskStyle         = lipgloss.NewStyle().Foreground(textBright).Background(panelBg)
+	selectedTask      = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true)
+	activeBoard       = lipgloss.NewStyle().Foreground(accentSoft).Background(panelBg).Bold(true)
+	errorStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).Bold(true)
+	barStyle          = lipgloss.NewStyle().Background(bg).Foreground(textBright).Bold(true).Padding(0, 1)
+	footerStyle       = lipgloss.NewStyle().Background(bg).Foreground(textMuted).Padding(0, 1)
+	toastStyle        = lipgloss.NewStyle().Background(panelBg).Foreground(textBright).Padding(0, 1)
+	toastInfoStyle    = lipgloss.NewStyle().Foreground(infoColor).Bold(true)
+	toastSuccessStyle = lipgloss.NewStyle().Foreground(successColor).Bold(true)
+	toastErrorStyle   = lipgloss.NewStyle().Foreground(dangerColor).Bold(true)
+	tabActive         = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true).Padding(0, 1)
+	tabInactive       = lipgloss.NewStyle().Foreground(textMuted).Padding(0, 1)
 )
 
 // View renders the TUI.
@@ -862,24 +869,32 @@ func (m Model) viewBoardSortMenu() string {
 
 func (m Model) viewConfirm() string {
 	message := "Confirm action?"
+	actionHint := "[y] Confirm   [n] Cancel"
+	messageStyle := taskStyle
 	switch m.confirmAction {
 	case confirmArchiveBoard:
 		message = fmt.Sprintf("Archive board %q?", m.confirmBoard)
 	case confirmDeleteBoard:
 		message = fmt.Sprintf("Delete board %q? This cannot be undone.", m.confirmBoard)
+		messageStyle = errorStyle
+		actionHint = "[y] Delete (danger)   [n] Cancel"
 	case confirmArchiveTask:
 		message = fmt.Sprintf("Archive task %q?", m.confirmTask)
 	case confirmDeleteTask:
 		message = fmt.Sprintf("Delete task %q? This cannot be undone.", m.confirmTask)
+		messageStyle = errorStyle
+		actionHint = "[y] Delete (danger)   [n] Cancel"
 	case confirmDeleteADR:
 		message = fmt.Sprintf("Delete ADR %s? This cannot be undone.", adr.FormatID(m.confirmADR))
+		messageStyle = errorStyle
+		actionHint = "[y] Delete (danger)   [n] Cancel"
 	}
 	lines := []string{
 		headerStyle.Render("Confirm"),
 		"",
-		taskStyle.Render(message),
+		messageStyle.Render(message),
 		"",
-		taskStyle.Render("[y] confirm  [n] cancel"),
+		taskStyle.Render(actionHint),
 	}
 	body := strings.Join(lines, "\n")
 	help := "y confirm • n cancel"
@@ -1514,22 +1529,46 @@ func (m Model) frame(title, body, footer string) string {
 	head := m.renderHeader(title)
 	footerText := m.footerText(footer)
 	foot := m.renderBar(footerText, footerStyle)
+	toast := m.renderToastBar()
 	footerGap := footerGapFor(footerText)
 	if m.height > 0 {
 		headerHeight := lipgloss.Height(head)
 		footerHeight := lipgloss.Height(foot)
-		available := m.height - headerHeight - footerHeight - footerGap
+		toastHeight := lipgloss.Height(toast)
+		available := m.height - headerHeight - footerHeight - footerGap - toastHeight
 		if available > 0 {
 			body = clampToHeight(body, available)
 			body = padToHeight(body, available)
 		}
 	}
 	parts := []string{head, body}
+	if strings.TrimSpace(toast) != "" {
+		parts = append(parts, toast)
+	}
 	for i := 0; i < footerGap; i++ {
 		parts = append(parts, "")
 	}
 	parts = append(parts, foot)
 	return strings.Join(parts, "\n")
+}
+
+func (m Model) renderToastBar() string {
+	if len(m.toastQueue) == 0 {
+		return ""
+	}
+	item := m.toastQueue[len(m.toastQueue)-1]
+	prefix := "INFO"
+	style := toastInfoStyle
+	switch item.Level {
+	case toastSuccess:
+		prefix = "SUCCESS"
+		style = toastSuccessStyle
+	case toastError:
+		prefix = "ERROR"
+		style = toastErrorStyle
+	}
+	content := fmt.Sprintf("%s: %s", style.Render(prefix), item.Message)
+	return m.renderBar(content, toastStyle)
 }
 
 func (m Model) renderBar(content string, style lipgloss.Style) string {
