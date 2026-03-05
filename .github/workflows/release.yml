@@ -245,7 +245,7 @@ jobs:
 
       - name: Upload build telemetry artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-telemetry-build-${{ matrix.goos }}-${{ matrix.goarch }}
           path: .sticky/release/telemetry/runs/*.json
@@ -253,7 +253,7 @@ jobs:
 
       - name: Upload build install bundle
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-build-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -734,7 +734,7 @@ jobs:
 
       - name: Upload smoke telemetry artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-telemetry-smoke-${{ matrix.os }}
           path: .sticky/release/telemetry/runs/*.json
