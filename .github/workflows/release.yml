@@ -245,7 +245,7 @@ jobs:
 
       - name: Upload build telemetry artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-telemetry-build-${{ matrix.goos }}-${{ matrix.goarch }}
           path: .sticky/release/telemetry/runs/*.json
@@ -253,7 +253,7 @@ jobs:
 
       - name: Upload build install bundle
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-build-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -344,21 +344,21 @@ jobs:
 
       - name: Download build bundle (linux amd64)
         if: runner.os == 'Linux'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-build-linux-amd64
           path: dist
 
       - name: Download build bundle (darwin amd64)
         if: runner.os == 'macOS'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-build-darwin-amd64
           path: dist
 
       - name: Download build bundle (windows amd64)
         if: runner.os == 'Windows'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-build-windows-amd64
           path: dist
@@ -734,7 +734,7 @@ jobs:
 
       - name: Upload smoke telemetry artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-telemetry-smoke-${{ matrix.os }}
           path: .sticky/release/telemetry/runs/*.json
