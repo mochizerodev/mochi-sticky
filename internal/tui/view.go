@@ -810,7 +810,12 @@ func (m Model) viewBoardDetail() string {
 	}
 
 	body := strings.Join(lines, "\n")
-	help := "e edit • ctrl+r/F5 refresh • x actions • b boards • esc back"
+	helpParts := []string{"e edit", "ctrl+r/F5 refresh", "x actions"}
+	if m.sidebarWidth() > 0 {
+		helpParts = append(helpParts, "b boards")
+	}
+	helpParts = append(helpParts, "esc back")
+	help := strings.Join(helpParts, " • ")
 	return m.frame(title, body, help)
 }
 
@@ -1313,11 +1318,25 @@ func (m Model) wikiNavWidth(gap int) int {
 }
 
 func (m Model) wikiHelpText() string {
-	base := "j/k move • enter pager • e edit • x actions • f filters • E/P export all • alt+1/2/3 or F1/F2/F3 tabs • ctrl+r/F5 refresh • b/esc back • q quit"
-	if summary := m.wikiFilterSummaryShort(); summary != "" {
-		return base + " • " + summary
+	parts := make([]string, 0, 12)
+	if len(m.wikiItems) > 1 {
+		parts = append(parts, "j/k move")
 	}
-	return base
+	if item, ok := m.currentWikiSelection(); ok && item.Kind == wikiItemPage {
+		parts = append(parts, "enter pager", "e edit")
+	}
+	parts = append(parts,
+		"x actions",
+		"f filters",
+		"E/P export all",
+		"alt+1/2/3 or F1/F2/F3 tabs",
+		"ctrl+r/F5 refresh",
+		"b/esc/q back",
+	)
+	if summary := m.wikiFilterSummaryShort(); summary != "" {
+		parts = append(parts, summary)
+	}
+	return strings.Join(parts, " • ")
 }
 
 func (m Model) bodyHeight(header, footer string) int {
@@ -1658,10 +1677,69 @@ func (m Model) statusLine() string {
 }
 
 func (m Model) boardHelpText() string {
+	parts := make([]string, 0, 12)
 	if m.boardFocus == focusBoards {
-		return "j/k boards • enter open board • a add board • e edit board • i board detail • x board actions • alt+1/2/3 or F1/F2/F3 tabs • tab/b tasks • ctrl+r/F5 refresh • q quit"
+		_, hasBoard := m.selectedBoard()
+		if len(m.boards) > 1 {
+			parts = append(parts, "j/k boards")
+		}
+		if hasBoard {
+			parts = append(parts, "enter open board")
+		}
+		parts = append(parts, "a add board")
+		if hasBoard {
+			parts = append(parts, "e edit board", "i board detail", "x board actions")
+		}
+		parts = append(parts,
+			"alt+1/2/3 or F1/F2/F3 tabs",
+			"tab/b tasks",
+			"ctrl+r/F5 refresh",
+			"q quit",
+		)
+		return strings.Join(parts, " • ")
 	}
-	return "h/l columns • j/k tasks • F filters • O sort • L list/kanban • a add task • x task actions • i task info • m/M move • z archive • alt+1/2/3 or F1/F2/F3 tabs • tab/b boards • ctrl+r/F5 refresh • q quit"
+
+	listView := m.boardUsesListView()
+	if !listView && len(m.columns) > 1 {
+		parts = append(parts, "h/l columns")
+	}
+	if listView {
+		if len(m.boardListEntries()) > 1 {
+			parts = append(parts, "j/k tasks")
+		}
+	} else if m.active >= 0 && m.active < len(m.columns) && len(m.columns[m.active].Tasks) > 1 {
+		parts = append(parts, "j/k tasks")
+	}
+	parts = append(parts, "F filters")
+	if listView {
+		parts = append(parts, "O sort")
+	}
+	if listView {
+		parts = append(parts, "L kanban")
+	} else {
+		parts = append(parts, "L list")
+	}
+	parts = append(parts, "a add task")
+	if m.currentTaskExists() {
+		parts = append(parts, "x task actions", "i task info")
+	}
+	if m.canMoveSelectedTaskForward() {
+		parts = append(parts, "m move")
+	}
+	if m.canMoveSelectedTaskBack() {
+		parts = append(parts, "M move back")
+	}
+	parts = append(parts, "z archive")
+	boardsFocusAvailable := m.sidebarWidth() > 0 || (m.width > 0 && m.width < 90)
+	if boardsFocusAvailable {
+		parts = append(parts, "tab/b boards")
+	}
+	parts = append(parts,
+		"alt+1/2/3 or F1/F2/F3 tabs",
+		"ctrl+r/F5 refresh",
+		"q quit",
+	)
+	return strings.Join(parts, " • ")
 }
 
 func (m Model) renderModal(title, body, help string) string {

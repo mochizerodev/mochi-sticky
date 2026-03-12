@@ -684,6 +684,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.String() == "M" {
+		if !m.canMoveSelectedTaskBack() {
+			return m, nil
+		}
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return m.moveSelectedTaskBackCmdContext(ctx)
 		})
@@ -750,6 +753,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "m":
+		if !m.canMoveSelectedTaskForward() {
+			return m, nil
+		}
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return m.moveSelectedTaskCmdContext(ctx)
 		})
@@ -770,6 +776,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.boardListAction = 0
 		return m, nil
 	case "o":
+		if !m.boardUsesListView() {
+			return m, nil
+		}
 		m.screen = screenBoardSortMenu
 		m.boardListAction = 0
 		return m, nil
@@ -1548,6 +1557,14 @@ func (m Model) moveSelectedTaskBackCmdContext(ctx context.Context) tea.Cmd {
 	task := column.Tasks[column.Selected]
 	prevStatus := m.columns[m.active-1].Key
 	return updateStatusCmdContext(ctx, m.repo, task.ID, prevStatus)
+}
+
+func (m Model) canMoveSelectedTaskForward() bool {
+	return m.currentTaskExists() && m.active >= 0 && m.active < len(m.columns)-1
+}
+
+func (m Model) canMoveSelectedTaskBack() bool {
+	return m.currentTaskExists() && m.active > 0 && m.active < len(m.columns)
 }
 
 func (m Model) handleBoardActionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
