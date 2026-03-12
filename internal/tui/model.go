@@ -73,6 +73,13 @@ const (
 	focusBoards
 )
 
+type wikiFocus int
+
+const (
+	focusWikiNav wikiFocus = iota
+	focusWikiContent
+)
+
 type boardEditMode int
 
 const (
@@ -199,6 +206,8 @@ type Model struct {
 	wikiFilterTagMode    string
 	wikiFilterInput      string
 	wikiFilterMode       wikiFilterMode
+	wikiFocus            wikiFocus
+	wikiContentOffset    int
 	adrColumns           []adrColumnModel
 	adrStatusColumns     []adr.Column
 	adrActive            int
@@ -253,6 +262,7 @@ func NewModel(repo *board.Repository, boardRepo *board.BoardRepository, baseDir 
 		boardTabScreen: screenBoard,
 		wikiTabScreen:  screenWiki,
 		adrTabScreen:   screenADR,
+		wikiFocus:      focusWikiNav,
 	}
 }
 
@@ -2023,7 +2033,14 @@ func (m Model) handleTaskDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEsc:
 		m.screen = screenBoard
 		return m, nil
-	case tea.KeyTab:
+	case tea.KeyUp:
+		if m.detailField == 0 {
+			m.detailField = detailFieldCount() - 1
+		} else {
+			m.detailField--
+		}
+		return m, nil
+	case tea.KeyDown:
 		m.detailField = (m.detailField + 1) % detailFieldCount()
 		return m, nil
 	case tea.KeyEnter:

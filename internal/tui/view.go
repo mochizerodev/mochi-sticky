@@ -15,33 +15,35 @@ import (
 )
 
 var (
-	bg                = lipgloss.Color("#141821")
-	panelBg           = lipgloss.Color("#1C1F26")
-	accent            = lipgloss.Color("#5FB0FF")
-	accentSoft        = lipgloss.Color("#5FB0FF")
-	textBright        = lipgloss.Color("#F5F7FA")
-	textMuted         = lipgloss.Color("#9CA3AF")
-	successColor      = lipgloss.Color("#42C47A")
-	dangerColor       = lipgloss.Color("#E35D5D")
-	infoColor         = accentSoft
-	borderColor       = lipgloss.Color("#334155")
-	columnBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	sidebarStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	infoBoxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	kanbanStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	headerStyle       = lipgloss.NewStyle().Bold(true).Foreground(accent).Background(panelBg)
-	taskStyle         = lipgloss.NewStyle().Foreground(textBright).Background(panelBg)
-	selectedTask      = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true)
-	activeBoard       = lipgloss.NewStyle().Foreground(accentSoft).Background(panelBg).Bold(true)
-	errorStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).Bold(true)
-	barStyle          = lipgloss.NewStyle().Background(bg).Foreground(textBright).Bold(true).Padding(0, 1)
-	footerStyle       = lipgloss.NewStyle().Background(bg).Foreground(textMuted).Padding(0, 1)
-	toastStyle        = lipgloss.NewStyle().Background(panelBg).Foreground(textBright).Padding(0, 1)
-	toastInfoStyle    = lipgloss.NewStyle().Foreground(infoColor).Bold(true)
-	toastSuccessStyle = lipgloss.NewStyle().Foreground(successColor).Bold(true)
-	toastErrorStyle   = lipgloss.NewStyle().Foreground(dangerColor).Bold(true)
-	tabActive         = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true).Padding(0, 1)
-	tabInactive       = lipgloss.NewStyle().Foreground(textMuted).Padding(0, 1)
+	bg                 = lipgloss.Color("#141821")
+	panelBg            = lipgloss.Color("#1C1F26")
+	accent             = lipgloss.Color("#5FB0FF")
+	accentSoft         = lipgloss.Color("#5FB0FF")
+	textBright         = lipgloss.Color("#F5F7FA")
+	textMuted          = lipgloss.Color("#9CA3AF")
+	successColor       = lipgloss.Color("#42C47A")
+	dangerColor        = lipgloss.Color("#E35D5D")
+	infoColor          = accentSoft
+	borderColor        = lipgloss.Color("#334155")
+	columnBorder       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	sidebarStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	infoBoxStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	kanbanStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	headerStyle        = lipgloss.NewStyle().Bold(true).Foreground(accent).Background(panelBg)
+	taskStyle          = lipgloss.NewStyle().Foreground(textBright).Background(panelBg)
+	selectedTask       = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true)
+	editableField      = lipgloss.NewStyle().Foreground(textBright).Background(lipgloss.Color("#223042")).Bold(true)
+	editableFieldFocus = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(lipgloss.Color("#7DD3FC")).Bold(true)
+	activeBoard        = lipgloss.NewStyle().Foreground(accentSoft).Background(panelBg).Bold(true)
+	errorStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).Bold(true)
+	barStyle           = lipgloss.NewStyle().Background(bg).Foreground(textBright).Bold(true).Padding(0, 1)
+	footerStyle        = lipgloss.NewStyle().Background(bg).Foreground(textMuted).Padding(0, 1)
+	toastStyle         = lipgloss.NewStyle().Background(panelBg).Foreground(textBright).Padding(0, 1)
+	toastInfoStyle     = lipgloss.NewStyle().Foreground(infoColor).Bold(true)
+	toastSuccessStyle  = lipgloss.NewStyle().Foreground(successColor).Bold(true)
+	toastErrorStyle    = lipgloss.NewStyle().Foreground(dangerColor).Bold(true)
+	tabActive          = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true).Padding(0, 1)
+	tabInactive        = lipgloss.NewStyle().Foreground(textMuted).Padding(0, 1)
 )
 
 // View renders the TUI.
@@ -1005,7 +1007,7 @@ func (m Model) viewTaskDetail() string {
 		lines = append(lines, taskStyle.Render("(empty)"))
 	}
 	body := strings.Join(lines, "\n")
-	help := "tab next • enter edit • a archive • d delete • e editor • x actions • esc back"
+	help := "↑/↓ field • enter edit • a archive • d delete • e editor • x actions • esc back"
 	return m.frame("Task Detail", body, help)
 }
 
@@ -1139,7 +1141,8 @@ func (m Model) renderWikiList() string {
 func (m Model) renderWikiLayout(header, help string) string {
 	navContent := m.renderWikiNavContent()
 	infoContent := m.renderWikiInfoContent()
-	pageContent := m.renderWikiPageContent()
+	pageHeight := m.wikiContentViewportHeight()
+	pageContent := m.renderWikiPageContent(pageHeight)
 
 	if m.width <= 0 {
 		parts := []string{
@@ -1169,6 +1172,9 @@ func (m Model) renderWikiLayout(header, help string) string {
 	if infoBoxWidth > 0 {
 		contentBoxStyle = contentBoxStyle.Width(infoBoxWidth)
 	}
+	if m.wikiFocus == focusWikiContent {
+		contentBoxStyle = contentBoxStyle.BorderForeground(accentSoft)
+	}
 	contentBox := contentBoxStyle.Render(pageContent)
 	rightPanel := strings.Join([]string{infoBox, "", contentBox}, "\n")
 
@@ -1186,6 +1192,9 @@ func (m Model) renderWikiLayout(header, help string) string {
 		navText = padToHeight(clampToHeight(navText, navContentHeight), navContentHeight)
 	}
 	navStyleSized := sidebarStyle
+	if m.wikiFocus == focusWikiNav {
+		navStyleSized = navStyleSized.BorderForeground(accentSoft)
+	}
 	if navInner := boxedContentWidth(navWidth); navInner > 0 {
 		navStyleSized = navStyleSized.Width(navInner)
 	}
@@ -1276,7 +1285,7 @@ func (m Model) renderWikiInfoContent() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderWikiPageContent() string {
+func (m Model) renderWikiPageContent(maxLines int) string {
 	item, ok := m.currentWikiSelection()
 	if !ok || item.Kind != wikiItemPage {
 		return taskStyle.Render("Select a page to read its content.")
@@ -1293,7 +1302,70 @@ func (m Model) renderWikiPageContent() string {
 	if len(terms) > 0 {
 		content = highlightTerms(content, terms, accentSoft)
 	}
+	lines := strings.Split(content, "\n")
+	totalLines := len(lines)
+	if maxLines > 0 && totalLines > maxLines {
+		offset := m.wikiContentOffset
+		maxOffset := totalLines - maxLines
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		if offset > maxOffset {
+			offset = maxOffset
+		}
+		end := offset + maxLines
+		if end > totalLines {
+			end = totalLines
+		}
+		visible := lines[offset:end]
+		scrollInfo := fmt.Sprintf("[lines %d-%d/%d]", offset+1, end, totalLines)
+		if len(visible) >= 2 {
+			visible = append(visible[:len(visible)-1], scrollInfo)
+		} else {
+			visible = []string{scrollInfo}
+		}
+		lines = visible
+	}
+	content = strings.Join(lines, "\n")
 	return taskStyle.Render(content)
+}
+
+func (m Model) wikiContentViewportHeight() int {
+	if m.width <= 0 || m.height <= 0 {
+		return 0
+	}
+	header := "Wiki ▸ Navigation"
+	help := m.wikiHelpText()
+	availableHeight := m.bodyHeight(header, help)
+	if availableHeight <= 0 {
+		return 0
+	}
+
+	gap := 1
+	navWidth := m.wikiNavWidth(gap)
+	rightWidth := m.width - navWidth - gap
+	if rightWidth < 0 {
+		rightWidth = 0
+	}
+	infoBoxWidth := boxedContentWidth(rightWidth)
+	infoBoxStyleSized := infoBoxStyle
+	if infoBoxWidth > 0 {
+		infoBoxStyleSized = infoBoxStyleSized.Width(infoBoxWidth)
+	}
+	infoBox := infoBoxStyleSized.Render(m.renderWikiInfoContent())
+	infoHeight := lipgloss.Height(infoBox)
+	contentHeight := availableHeight - infoHeight - 1
+	if contentHeight < 3 {
+		return 1
+	}
+	innerHeight := contentHeight - 2
+	if innerHeight < 1 {
+		return 1
+	}
+	return innerHeight
 }
 
 func (m Model) wikiNavWidth(gap int) int {
@@ -1319,8 +1391,13 @@ func (m Model) wikiNavWidth(gap int) int {
 
 func (m Model) wikiHelpText() string {
 	parts := make([]string, 0, 12)
-	if len(m.wikiItems) > 1 {
-		parts = append(parts, "j/k move")
+	if m.wikiFocus == focusWikiContent {
+		parts = append(parts, "j/k scroll preview", "tab nav panel")
+	} else {
+		if len(m.wikiItems) > 1 {
+			parts = append(parts, "j/k move")
+		}
+		parts = append(parts, "tab content panel")
 	}
 	if item, ok := m.currentWikiSelection(); ok && item.Kind == wikiItemPage {
 		parts = append(parts, "enter pager", "e edit")
@@ -1537,11 +1614,11 @@ func (m Model) activeBoardName() string {
 }
 
 func (m Model) fieldLine(label, value string, field detailField) string {
-	line := fmt.Sprintf("%s: %s", label, value)
+	line := fmt.Sprintf("✎ %s: %s", label, value)
 	if m.detailField == field {
-		return selectedTask.Render(line)
+		return editableFieldFocus.Render(line)
 	}
-	return taskStyle.Render(line)
+	return editableField.Render(line)
 }
 
 func (m Model) frame(title, body, footer string) string {
@@ -1669,7 +1746,10 @@ func (m Model) statusLine() string {
 			state = m.loadingMessage
 		}
 	}
-	parts := []string{fmt.Sprintf("Tab: %s", tabLabel), state}
+	parts := []string{state}
+	if m.screen != screenTaskDetail {
+		parts = append(parts, fmt.Sprintf("Tab: %s", tabLabel))
+	}
 	if m.width > 0 && m.height > 0 {
 		parts = append(parts, fmt.Sprintf("Size: %dx%d", m.width, m.height))
 	}

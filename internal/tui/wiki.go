@@ -287,6 +287,15 @@ func (m Model) selectedWikiExportSelection() (wiki.ExportSelection, bool) {
 }
 
 func (m Model) handleWikiKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyTab {
+		if m.wikiFocus == focusWikiNav {
+			m.wikiFocus = focusWikiContent
+		} else {
+			m.wikiFocus = focusWikiNav
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "E":
 		return m.startWikiExport("md", wiki.ExportSelection{})
@@ -305,12 +314,22 @@ func (m Model) handleWikiKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loadingMessage = "Loading wiki..."
 		return m, loadWikiCmdContext(ctx, m.wikiRoot())
 	case "j":
+		if m.wikiFocus == focusWikiContent {
+			m.scrollWikiContent(1)
+			return m, nil
+		}
 		m.wikiIndex++
 		m.wikiIndex = clampIndex(m.wikiIndex, len(m.wikiItems))
+		m.wikiContentOffset = 0
 		return m, nil
 	case "k":
+		if m.wikiFocus == focusWikiContent {
+			m.scrollWikiContent(-1)
+			return m, nil
+		}
 		m.wikiIndex--
 		m.wikiIndex = clampIndex(m.wikiIndex, len(m.wikiItems))
+		m.wikiContentOffset = 0
 		return m, nil
 	case "/", "f":
 		m.screen = screenWikiFilterMenu
@@ -564,6 +583,7 @@ func (m *Model) applyWikiFilters() {
 	if len(items) == 0 || len(m.wikiPages) == 0 {
 		m.wikiItems = items
 		m.wikiIndex = clampIndex(m.wikiIndex, len(m.wikiItems))
+		m.wikiContentOffset = 0
 		return
 	}
 
@@ -616,6 +636,49 @@ func (m *Model) applyWikiFilters() {
 
 	m.wikiItems = filteredItems
 	m.wikiIndex = clampIndex(m.wikiIndex, len(m.wikiItems))
+	m.wikiContentOffset = 0
+}
+
+func (m *Model) scrollWikiContent(delta int) {
+	if delta == 0 {
+		return
+	}
+	lineCount := m.currentWikiPageLineCount()
+	if lineCount == 0 {
+		m.wikiContentOffset = 0
+		return
+	}
+	viewportHeight := m.wikiContentViewportHeight()
+	if viewportHeight <= 0 {
+		viewportHeight = 10
+	}
+	maxOffset := lineCount - viewportHeight
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	m.wikiContentOffset += delta
+	if m.wikiContentOffset < 0 {
+		m.wikiContentOffset = 0
+	}
+	if m.wikiContentOffset > maxOffset {
+		m.wikiContentOffset = maxOffset
+	}
+}
+
+func (m Model) currentWikiPageLineCount() int {
+	item, ok := m.currentWikiSelection()
+	if !ok || item.Kind != wikiItemPage {
+		return 0
+	}
+	page, ok := m.wikiPages[item.Slug]
+	if !ok {
+		return 0
+	}
+	content := strings.TrimSpace(page.Content)
+	if content == "" {
+		return 0
+	}
+	return len(strings.Split(content, "\n"))
 }
 
 func (m Model) wikiFilterOptions() wiki.FilterOptions {

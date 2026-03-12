@@ -1,4 +1,4 @@
-active: board-improvement
+active: default
 boards:
     - id: default
       name: Default
