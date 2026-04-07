@@ -12,13 +12,13 @@ status: published
 
 Quick visual tour of the `mochi-sticky` TUI.
 
-## Board Selector
-
-![Board selector](../assets/screenshots/mochi-sticky-tui-board-list.png)
-
 ## Board (Kanban)
 
 ![Board view](../assets/screenshots/mochi-sticky-tui-board.png)
+
+## Board (Kanban - List View)
+
+![Board selector](../assets/screenshots/mochi-sticky-tui-board-list.png)
 
 ## Task Detail
 
