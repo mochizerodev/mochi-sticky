@@ -4,12 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.2.0]
+
 - TUI v2: new app shell with tabs for Boards, Wiki, and ADRs.
 - Boards: responsive Kanban view with improved resize rules.
 - Boards: list view with sorting and filtering UI.
 - Unified modals and toast feedback across the TUI.
 - Improved wiki interaction and focus behavior.
 - Hide unused options in the bottom menu.
+- Fixed MCP for opencode.
+- Docs: moved TUI screenshots into the built-in wiki and added a screenshots page; README now includes a screenshot.
 
 ## [v0.1.1]
 
