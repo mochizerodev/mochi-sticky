@@ -267,6 +267,7 @@ jobs:
           python - <<'PY'
           import os
           import re
+          import textwrap
           from pathlib import Path
           
           tag = os.environ.get("TAG", "")
@@ -291,11 +292,12 @@ jobs:
           if start is None:
               section = "No changelog section found."
           else:
-              section = "\\n".join(lines[start:end]).strip()
+              section = "\n".join(lines[start:end]).strip()
               if not section:
                   section = "No entries."
 
-          install_block = f"""## Install
+          install_block = textwrap.dedent(f"""\
+          ## Install
 
           ### Linux/macOS (shell installer)
           ```bash
@@ -317,10 +319,10 @@ jobs:
 
           Re-run installers with `--version <tag>` (or `-Version <tag>`) to upgrade or downgrade.
           Troubleshooting: see `getting-started/install` and `troubleshooting/common-issues` in the project wiki.
-          """
+          """).strip() + "\n"
 
           notes_path = Path("release-notes.md")
-          notes_path.write_text(f"# Release {tag}\\n\\n{section}\\n\\n{install_block}\\n", encoding="utf-8")
+          notes_path.write_text(f"# Release {tag}\n\n{section}\n\n{install_block}", encoding="utf-8")
           PY
 
       - name: Upload release assets
