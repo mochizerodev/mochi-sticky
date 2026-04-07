@@ -42,6 +42,12 @@ This project may use AI-assisted tooling during development. All changes are rev
 - 📦 **No Database** — Everything is Markdown + YAML
 - 🔄 **Git-Friendly** — Version control your workflow
 
+## Screenshots
+
+<p align="center">
+	<img src=".sticky/wiki/assets/screenshots/mochi-sticky-tui-board.png" alt="mochi-sticky TUI board" width="900">
+</p>
+
 <!-- Favicons: they live in assets/brand/favicons/; generate with `scripts/generate-favicons.sh` -->
 
 ## 1. Project Vision
