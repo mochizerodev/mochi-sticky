@@ -10,7 +10,33 @@ import (
 )
 
 func (m Model) adrHelpText() string {
-	return "h/l columns • j/k adrs • a add adr • x actions • i detail • m/M move • e editor • ctrl+r/F5 refresh • b/esc back"
+	parts := make([]string, 0, 12)
+	if len(m.adrColumns) > 1 {
+		parts = append(parts, "h/l columns")
+	}
+	if m.adrActive >= 0 && m.adrActive < len(m.adrColumns) && len(m.adrColumns[m.adrActive].ADRs) > 1 {
+		parts = append(parts, "j/k adrs")
+	}
+	parts = append(parts, "a add adr", "x actions")
+	record, hasADR := m.currentADR()
+	if hasADR {
+		parts = append(parts, "i detail")
+	}
+	if m.canMoveSelectedADRForward() {
+		parts = append(parts, "m move")
+	}
+	if m.canMoveSelectedADRBack() {
+		parts = append(parts, "M move back")
+	}
+	if hasADR && strings.TrimSpace(record.FilePath) != "" {
+		parts = append(parts, "e editor")
+	}
+	parts = append(parts,
+		"alt+1/2/3 or F1/F2/F3 tabs",
+		"ctrl+r/F5 refresh",
+		"b/esc/q back",
+	)
+	return strings.Join(parts, " • ")
 }
 
 func (m Model) viewADR() string {
@@ -18,7 +44,7 @@ func (m Model) viewADR() string {
 }
 
 func (m Model) renderADRScreen(helpOverride string) string {
-	header := "mochi-sticky • ADRs"
+	header := "ADRs ▸ Decisions"
 	help := helpOverride
 	if strings.TrimSpace(help) == "" {
 		help = m.adrHelpText()
@@ -85,7 +111,7 @@ func (m Model) renderADRScreen(helpOverride string) string {
 	board := lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
 	kanbanStyleSized := kanbanStyle
 	if availableWidth > 0 {
-		kanbanStyleSized = kanbanStyleSized.Width(availableWidth)
+		kanbanStyleSized = kanbanStyleSized.Width(boxedContentWidth(availableWidth))
 	}
 	if kanbanHeight > 0 {
 		kanbanContentHeight := max(0, kanbanHeight-2)

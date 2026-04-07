@@ -32,6 +32,7 @@ All data lives in `.sticky/` as Markdown files with YAML frontmatter — no exte
 ### User Guide
 - [CLI Usage](user-guide/cli.md) — Command reference for daily workflow
 - [TUI Usage](user-guide/tui.md) — Keyboard shortcuts and interactive board navigation
+- [Screenshots](user-guide/screenshots.md) — Visual tour of the TUI
 - [Wiki Basics](user-guide/wiki.md) — Document management and organization
 - [MCP Usage](user-guide/mcp.md) — Integrate with AI agents via Model Context Protocol
 - [Use Cases](user-guide/use-cases.md) — Workflow examples and patterns

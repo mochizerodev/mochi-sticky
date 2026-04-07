@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,6 +24,10 @@ import (
 const (
 	serverName    = "mochi-sticky"
 	serverVersion = "0.1.0"
+	// defaultProtocolVersion is used when a client does not provide one.
+	//
+	// NOTE: MCP protocol versions are date-based strings.
+	defaultProtocolVersion = "2024-11-05"
 )
 
 const (
@@ -215,6 +220,11 @@ type listWikiParams struct {
 	CaseInsensitive  *bool    `json:"case_insensitive"`
 }
 
+type mcpRoot struct {
+	URI  string `json:"uri"`
+	Name string `json:"name"`
+}
+
 type initializeParams struct {
 	ProtocolVersion string `json:"protocolVersion"`
 	Capabilities    struct {
@@ -226,10 +236,7 @@ type initializeParams struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	} `json:"clientInfo"`
-	Roots []struct {
-		URI  string `json:"uri"`
-		Name string `json:"name"`
-	} `json:"roots"`
+	Roots []mcpRoot `json:"roots"`
 }
 
 type listWikiSectionsParams struct {
@@ -414,6 +421,14 @@ type boardSummary struct {
 type toolDescriptor struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
+	InputSchema map[string]any `json:"inputSchema,omitempty"`
+}
+
+// toolDescriptorLegacy preserves the pre-MCP naming used by early prototypes.
+// It is still served for the non-standard "list_tools" endpoint.
+type toolDescriptorLegacy struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
 	InputSchema map[string]any `json:"input_schema,omitempty"`
 }
 
@@ -423,6 +438,50 @@ type resourceDescriptor struct {
 	Description string `json:"description"`
 }
 
+// --- MCP protocol response shapes ---
+
+// mcpImplementation is the MCP "Implementation" object.
+type mcpImplementation struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// mcpServerCapabilities is the MCP ServerCapabilities object.
+//
+// Most clients expect tools/resources to be objects (even if empty).
+type mcpServerCapabilities struct {
+	Tools     map[string]any `json:"tools"`
+	Resources map[string]any `json:"resources"`
+}
+
+// mcpInitializeResult is the MCP InitializeResult object.
+type mcpInitializeResult struct {
+	ProtocolVersion string                `json:"protocolVersion"`
+	Capabilities    mcpServerCapabilities `json:"capabilities"`
+	ServerInfo      mcpImplementation     `json:"serverInfo"`
+	Instructions    string                `json:"instructions,omitempty"`
+}
+
+type mcpTextContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type mcpCallToolResult struct {
+	Content []mcpTextContent `json:"content"`
+	IsError bool             `json:"isError,omitempty"`
+}
+
+type mcpResourceContents struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+}
+
+type mcpReadResourceResult struct {
+	Contents []mcpResourceContents `json:"contents"`
+}
+
 func (s *Server) dispatch(ctx context.Context, req rpcRequest) (any, *rpcError) {
 	select {
 	case <-ctx.Done():
@@ -430,22 +489,20 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) (any, *rpcError) 
 	default:
 	}
 	switch req.Method {
-	case "initialize", "handshake":
+	case "initialize":
 		var params initializeParams
-		if err := decodeParams(req.Params, &params); err == nil && len(params.Roots) > 0 {
-			// Use first root as workspace directory
-			if rootURI := params.Roots[0].URI; strings.HasPrefix(rootURI, "file://") {
-				rootPath := strings.TrimPrefix(rootURI, "file://")
-				if absPath, err := filepath.Abs(rootPath); err == nil {
-					s.mu.Lock()
-					s.baseDir = absPath
-					// Update storageRoot relative to new baseDir
-					s.storageRoot = filepath.Join(absPath, ".sticky")
-					s.mu.Unlock()
-				}
-			}
+		if err := decodeParams(req.Params, &params); err != nil {
+			return nil, invalidParams(err)
 		}
-		return s.serverInfo(), nil
+		s.applyWorkspaceRoots(params.Roots)
+		return s.initializeResult(params), nil
+	case "handshake":
+		// Legacy prototype method.
+		var params initializeParams
+		if err := decodeParams(req.Params, &params); err == nil {
+			s.applyWorkspaceRoots(params.Roots)
+		}
+		return s.legacyServerInfo(), nil
 	case "shutdown":
 		s.mu.Lock()
 		s.shutdown = true
@@ -457,8 +514,10 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) (any, *rpcError) 
 		s.shutdown = true
 		s.mu.Unlock()
 		return nil, nil
-	case "tools/list", "list_tools":
+	case "tools/list":
 		return map[string]any{"tools": toolList()}, nil
+	case "list_tools":
+		return map[string]any{"tools": toolListLegacy()}, nil
 	case "resources/list", "list_resources":
 		return map[string]any{"resources": resourceList()}, nil
 	case "resources/read":
@@ -468,7 +527,7 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) (any, *rpcError) 
 		if err := decodeParams(req.Params, &params); err != nil {
 			return nil, invalidParams(err)
 		}
-		return s.readResource(ctx, params.URI)
+		return s.readResourceMCP(ctx, params.URI)
 	case "tools/call":
 		// Standard MCP tools/call - extract tool name and arguments
 		var callParams struct {
@@ -489,7 +548,15 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) (any, *rpcError) 
 			Params:  argsJSON,
 			ID:      req.ID,
 		}
-		return s.dispatch(ctx, toolReq)
+		rawResult, rawErr := s.dispatch(ctx, toolReq)
+		if rawErr != nil {
+			return nil, rawErr
+		}
+		wrapped, err := wrapToolResult(rawResult)
+		if err != nil {
+			return nil, internalError(err)
+		}
+		return wrapped, nil
 	case "list_tasks":
 		var params listTasksParams
 		if err := decodeParams(req.Params, &params); err != nil {
@@ -729,7 +796,165 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) (any, *rpcError) 
 	}
 }
 
-func (s *Server) serverInfo() map[string]any {
+func (s *Server) initializeResult(params initializeParams) mcpInitializeResult {
+	protocolVersion := strings.TrimSpace(params.ProtocolVersion)
+	if protocolVersion == "" {
+		protocolVersion = defaultProtocolVersion
+	}
+	return mcpInitializeResult{
+		ProtocolVersion: protocolVersion,
+		Capabilities: mcpServerCapabilities{
+			Tools:     map[string]any{},
+			Resources: map[string]any{},
+		},
+		ServerInfo: mcpImplementation{
+			Name:    serverName,
+			Version: serverVersion,
+		},
+	}
+}
+
+func (s *Server) applyWorkspaceRoots(roots []mcpRoot) {
+	if len(roots) == 0 {
+		return
+	}
+	rootURI := strings.TrimSpace(roots[0].URI)
+	rootPath, ok := fileURIToPath(rootURI)
+	if !ok {
+		return
+	}
+	absPath, err := filepath.Abs(rootPath)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.baseDir = absPath
+	// Update storageRoot relative to new baseDir.
+	s.storageRoot = filepath.Join(absPath, ".sticky")
+	s.mu.Unlock()
+}
+
+func fileURIToPath(uri string) (string, bool) {
+	if !strings.HasPrefix(uri, "file://") {
+		return "", false
+	}
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		// Fallback to a simple prefix trim.
+		return strings.TrimPrefix(uri, "file://"), true
+	}
+
+	path := parsed.Path
+	if path == "" {
+		return "", false
+	}
+	// Best-effort decode.
+	if decoded, err := url.PathUnescape(path); err == nil {
+		path = decoded
+	}
+
+	// Handle Windows drive paths encoded as /C:/... (common in file URIs).
+	if looksLikeWindowsDrivePath(path) {
+		path = strings.TrimPrefix(path, "/")
+	}
+
+	// Handle UNC paths like file://server/share/path
+	if parsed.Host != "" && parsed.Host != "localhost" {
+		// filepath.FromSlash is OS-aware.
+		return "\\\\" + parsed.Host + filepath.FromSlash(path), true
+	}
+
+	return filepath.FromSlash(path), true
+}
+
+func looksLikeWindowsDrivePath(path string) bool {
+	if len(path) < 4 {
+		return false
+	}
+	// /C:/...
+	if path[0] != '/' {
+		return false
+	}
+	if !isASCIIAlpha(path[1]) {
+		return false
+	}
+	return path[2] == ':'
+}
+
+func isASCIIAlpha(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+}
+
+func toolListLegacy() []toolDescriptorLegacy {
+	tools := toolList()
+	result := make([]toolDescriptorLegacy, 0, len(tools))
+	for _, tool := range tools {
+		result = append(result, toolDescriptorLegacy(tool))
+	}
+	return result
+}
+
+func wrapToolResult(raw any) (mcpCallToolResult, error) {
+	if raw == nil {
+		return mcpCallToolResult{Content: []mcpTextContent{{Type: "text", Text: "null"}}}, nil
+	}
+	if text, ok := raw.(string); ok {
+		return mcpCallToolResult{Content: []mcpTextContent{{Type: "text", Text: text}}}, nil
+	}
+
+	encoded, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		// Fallback to compact JSON.
+		encoded, err = json.Marshal(raw)
+		if err != nil {
+			return mcpCallToolResult{}, err
+		}
+	}
+	return mcpCallToolResult{Content: []mcpTextContent{{Type: "text", Text: string(encoded)}}}, nil
+}
+
+func (s *Server) readResourceMCP(ctx context.Context, uri string) (any, *rpcError) {
+	raw, err := s.readResource(ctx, uri)
+	if err != nil {
+		return nil, err
+	}
+	mimeType, text, convErr := wrapResourceAsText(raw)
+	if convErr != nil {
+		return nil, internalError(convErr)
+	}
+	return mcpReadResourceResult{
+		Contents: []mcpResourceContents{{
+			URI:      uri,
+			MimeType: mimeType,
+			Text:     text,
+		}},
+	}, nil
+}
+
+func wrapResourceAsText(raw any) (mimeType string, text string, err error) {
+	// Common path: our legacy resource readers return a map with a "content" string.
+	switch v := raw.(type) {
+	case map[string]string:
+		if content, ok := v["content"]; ok {
+			return "text/markdown", content, nil
+		}
+	case map[string]any:
+		if content, ok := v["content"].(string); ok {
+			return "text/markdown", content, nil
+		}
+	}
+
+	encoded, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		encoded, err = json.Marshal(raw)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return "application/json", string(encoded), nil
+}
+
+func (s *Server) legacyServerInfo() map[string]any {
 	return map[string]any{
 		"name":    serverName,
 		"version": serverVersion,
@@ -758,8 +983,15 @@ func resourceNames() []string {
 	return result
 }
 
+func emptyInputSchema() map[string]any {
+	return map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+	}
+}
+
 func toolList() []toolDescriptor {
-	return []toolDescriptor{
+	tools := []toolDescriptor{
 		{
 			Name:        "list_tasks",
 			Description: "List tasks with optional filters",
@@ -822,6 +1054,12 @@ func toolList() []toolDescriptor {
 		{Name: "delete_wiki_page", Description: "Delete a wiki page"},
 		{Name: "generate_wiki_index", Description: "Generate wiki index from pages"},
 	}
+	for i := range tools {
+		if tools[i].InputSchema == nil {
+			tools[i].InputSchema = emptyInputSchema()
+		}
+	}
+	return tools
 }
 
 func resourceList() []resourceDescriptor {

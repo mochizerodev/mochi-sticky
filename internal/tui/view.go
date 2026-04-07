@@ -15,24 +15,35 @@ import (
 )
 
 var (
-	bg           = lipgloss.Color("#0F111A")
-	panelBg      = lipgloss.Color("#111827")
-	accent       = lipgloss.Color("#2DD4BF")
-	accentSoft   = lipgloss.Color("#14B8A6")
-	textBright   = lipgloss.Color("#E5E7EB")
-	textMuted    = lipgloss.Color("#9CA3AF")
-	borderColor  = lipgloss.Color("#334155")
-	columnBorder = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	sidebarStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	infoBoxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	kanbanStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
-	headerStyle  = lipgloss.NewStyle().Bold(true).Foreground(accent).Background(panelBg)
-	taskStyle    = lipgloss.NewStyle().Foreground(textBright).Background(panelBg)
-	selectedTask = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true)
-	activeBoard  = lipgloss.NewStyle().Foreground(accentSoft).Background(panelBg).Bold(true)
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).Bold(true)
-	barStyle     = lipgloss.NewStyle().Background(bg).Foreground(textBright).Bold(true).Padding(0, 1)
-	footerStyle  = lipgloss.NewStyle().Background(bg).Foreground(textMuted).Padding(0, 1)
+	bg                 = lipgloss.Color("#141821")
+	panelBg            = lipgloss.Color("#1C1F26")
+	accent             = lipgloss.Color("#5FB0FF")
+	accentSoft         = lipgloss.Color("#5FB0FF")
+	textBright         = lipgloss.Color("#F5F7FA")
+	textMuted          = lipgloss.Color("#9CA3AF")
+	successColor       = lipgloss.Color("#42C47A")
+	dangerColor        = lipgloss.Color("#E35D5D")
+	infoColor          = accentSoft
+	borderColor        = lipgloss.Color("#334155")
+	columnBorder       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	sidebarStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	infoBoxStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	kanbanStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(borderColor).Padding(0, 1).Background(panelBg)
+	headerStyle        = lipgloss.NewStyle().Bold(true).Foreground(accent).Background(panelBg)
+	taskStyle          = lipgloss.NewStyle().Foreground(textBright).Background(panelBg)
+	selectedTask       = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true)
+	editableField      = lipgloss.NewStyle().Foreground(textBright).Background(lipgloss.Color("#223042")).Bold(true)
+	editableFieldFocus = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(lipgloss.Color("#7DD3FC")).Bold(true)
+	activeBoard        = lipgloss.NewStyle().Foreground(accentSoft).Background(panelBg).Bold(true)
+	errorStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).Bold(true)
+	barStyle           = lipgloss.NewStyle().Background(bg).Foreground(textBright).Bold(true).Padding(0, 1)
+	footerStyle        = lipgloss.NewStyle().Background(bg).Foreground(textMuted).Padding(0, 1)
+	toastStyle         = lipgloss.NewStyle().Background(panelBg).Foreground(textBright).Padding(0, 1)
+	toastInfoStyle     = lipgloss.NewStyle().Foreground(infoColor).Bold(true)
+	toastSuccessStyle  = lipgloss.NewStyle().Foreground(successColor).Bold(true)
+	toastErrorStyle    = lipgloss.NewStyle().Foreground(dangerColor).Bold(true)
+	tabActive          = lipgloss.NewStyle().Foreground(lipgloss.Color("#0B1016")).Background(accent).Bold(true).Padding(0, 1)
+	tabInactive        = lipgloss.NewStyle().Foreground(textMuted).Padding(0, 1)
 )
 
 // View renders the TUI.
@@ -54,6 +65,12 @@ func (m Model) View() string {
 		return m.viewBoardEdit()
 	case screenBoardDetail:
 		return m.viewBoardDetail()
+	case screenBoardFilter:
+		return m.viewBoardFilter()
+	case screenBoardFilterMenu:
+		return m.viewBoardFilterMenu()
+	case screenBoardSortMenu:
+		return m.viewBoardSortMenu()
 	case screenConfirm:
 		return m.viewConfirm()
 	case screenTaskActions:
@@ -95,78 +112,97 @@ func (m Model) View() string {
 }
 
 func (m Model) renderBoardScreen(helpOverride string) string {
-	header := fmt.Sprintf("mochi-sticky • Board: %s", m.activeBoardName())
+	header := fmt.Sprintf("Boards ▸ %s ▸ Tasks", m.activeBoardName())
+	if m.boardFocus == focusBoards {
+		header = "Boards ▸ Boards"
+	}
 	help := helpOverride
 	if strings.TrimSpace(help) == "" {
 		help = m.boardHelpText()
 	}
-	sidebarWidth := m.sidebarWidth()
+	availableHeight := m.bodyHeight(header, help)
 	availableWidth := m.width
-	if sidebarWidth > 0 {
-		// Sidebar width does not include padding/border.
-		availableWidth -= sidebarWidth + 4
+	contentHeight := availableHeight
+	if availableWidth <= 0 {
+		return m.frame(header, m.renderBoardMainPanel(0, contentHeight), help)
 	}
+
+	switch {
+	case availableWidth >= 120:
+		const (
+			leftWidth = 26
+			gap       = 1
+			minCenter = 36
+		)
+		if availableWidth < leftWidth+minCenter+gap {
+			return m.frame(header, m.renderBoardTwoPane(availableWidth, contentHeight), help)
+		}
+		centerWidth := availableWidth - leftWidth - gap
+		left := m.renderBoardSidebar(leftWidth, contentHeight)
+		center := m.renderBoardCenterPanel(centerWidth, contentHeight)
+		body := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), center)
+		return m.frame(header, body, help)
+	case availableWidth >= 90:
+		return m.frame(header, m.renderBoardTwoPane(availableWidth, contentHeight), help)
+	default:
+		if m.boardFocus == focusBoards {
+			return m.frame(header, m.renderBoardSidebar(availableWidth, contentHeight), help)
+		}
+		return m.frame(header, m.renderBoardMainPanel(availableWidth, contentHeight), help)
+	}
+}
+
+func (m Model) renderBoardTwoPane(availableWidth, availableHeight int) string {
+	const (
+		leftWidth = 26
+		gap       = 1
+	)
+	if availableWidth <= leftWidth+gap+24 {
+		return m.renderBoardMainPanel(availableWidth, availableHeight)
+	}
+	centerWidth := availableWidth - leftWidth - gap
+	left := m.renderBoardSidebar(leftWidth, availableHeight)
+	center := m.renderBoardCenterPanel(centerWidth, availableHeight)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), center)
+}
+
+func (m Model) renderBoardCenterPanel(panelWidth, panelHeight int) string {
+	if m.boardFocus == focusBoards {
+		return m.renderBoardPreviewPanel(panelWidth, panelHeight)
+	}
+	return m.renderBoardMainPanel(panelWidth, panelHeight)
+}
+
+func (m Model) renderBoardMainPanel(panelWidth, panelHeight int) string {
+	availableWidth := panelWidth
 	if availableWidth < 0 {
 		availableWidth = 0
 	}
-
-	// Account for the kanban frame (rounded border + 1 space of horizontal padding on each side).
-	const kanbanFrameWidth = 4
-	columnAreaWidth := availableWidth
-	if columnAreaWidth > 0 {
-		columnAreaWidth -= kanbanFrameWidth
-		if columnAreaWidth < 0 {
-			columnAreaWidth = 0
-		}
+	if m.boardUsesListViewForWidth(availableWidth) {
+		return m.renderBoardListPanel(availableWidth, panelHeight)
 	}
+	boxWidth := boxedContentWidth(availableWidth)
 
-	if columnAreaWidth > 0 {
-		// Column width excludes padding and borders.
-		perColumnAllowance := 4 // 2 for border + 2 for padding
-		columnAreaWidth -= perColumnAllowance * len(m.columns)
-		if columnAreaWidth < 0 {
-			columnAreaWidth = 0
-		}
-	}
-
-	columnWidth := m.columnWidthFor(columnAreaWidth)
+	viewportStart, viewportCount, columnWidth := m.boardKanbanViewport(availableWidth)
 	taskIndex := buildTaskIndex(m.columns)
 	infoBox := m.renderBoardInfoBox(availableWidth)
 	infoBoxHeight := 0
 	if infoBox != "" {
 		infoBoxHeight = lipgloss.Height(infoBox)
 	}
-
-	maxContentLines := 0
-	for _, column := range m.columns {
-		lines := 1
-		if len(column.Tasks) == 0 {
-			lines++
-		} else {
-			lines += len(column.Tasks)
-		}
-		if lines > maxContentLines {
-			maxContentLines = lines
-		}
+	viewportFooter := m.renderKanbanViewportFooter(viewportStart, viewportCount)
+	viewportFooterHeight := 0
+	if strings.TrimSpace(viewportFooter) != "" {
+		viewportFooterHeight = 1
 	}
 
-	availableHeight := 0
-	if m.height > 0 {
-		headerHeight := lipgloss.Height(m.renderBar(header, barStyle))
-		footerHeight := lipgloss.Height(m.renderBar(help, footerStyle))
-		footerGap := footerGapFor(help)
-		availableHeight = m.height - headerHeight - footerHeight - footerGap
-		if availableHeight < 0 {
-			availableHeight = 0
-		}
-	}
 	spacing := 0
 	if infoBox != "" {
 		spacing = 1
 	}
 	contentHeightCap := 0
-	if availableHeight > 0 {
-		contentHeightCap = availableHeight - infoBoxHeight - spacing
+	if panelHeight > 0 {
+		contentHeightCap = panelHeight - infoBoxHeight - spacing - viewportFooterHeight
 		if contentHeightCap < 0 {
 			contentHeightCap = 0
 		}
@@ -179,10 +215,10 @@ func (m Model) renderBoardScreen(helpOverride string) string {
 			kanbanHeight = 3 // minimum to show border + one line
 		}
 	}
-	if availableHeight > 0 && kanbanHeight > 0 {
+	if panelHeight > 0 && kanbanHeight > 0 {
 		totalBodyHeight := infoBoxHeight + spacing + kanbanHeight
-		if totalBodyHeight > availableHeight {
-			overflow := totalBodyHeight - availableHeight
+		if totalBodyHeight > panelHeight {
+			overflow := totalBodyHeight - panelHeight
 			if overflow > 0 {
 				kanbanHeight -= overflow
 				if kanbanHeight < 0 {
@@ -197,15 +233,17 @@ func (m Model) renderBoardScreen(helpOverride string) string {
 		columnHeight = kanbanHeight - 2
 	}
 
-	rendered := make([]string, 0, len(m.columns))
-	for i, column := range m.columns {
-		rendered = append(rendered, m.renderColumn(column, i == m.active, columnWidth, i == len(m.columns)-1, taskIndex, columnHeight))
+	rendered := make([]string, 0, viewportCount)
+	for i := 0; i < viewportCount; i++ {
+		columnIndex := viewportStart + i
+		column := m.columns[columnIndex]
+		rendered = append(rendered, m.renderColumn(column, columnIndex == m.active, columnWidth, i == viewportCount-1, taskIndex, columnHeight))
 	}
 
 	board := lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
 	kanbanStyleSized := kanbanStyle
-	if availableWidth > 0 {
-		kanbanStyleSized = kanbanStyleSized.Width(availableWidth)
+	if boxWidth > 0 {
+		kanbanStyleSized = kanbanStyleSized.Width(boxWidth)
 	}
 	if kanbanHeight > 0 {
 		kanbanContentHeight := max(0, kanbanHeight-2)
@@ -214,21 +252,226 @@ func (m Model) renderBoardScreen(helpOverride string) string {
 		}
 	}
 	kanbanBox := kanbanStyleSized.Render(board)
-	sections := make([]string, 0, 2)
+	sections := make([]string, 0, 3)
 	if infoBox != "" {
 		sections = append(sections, infoBox)
 	}
-	sections = append(sections, kanbanBox)
-	body := strings.Join(sections, "\n")
-	if sidebarWidth > 0 {
-		bodyHeight := lipgloss.Height(body)
-		body = lipgloss.JoinHorizontal(lipgloss.Top, m.renderBoardSidebar(sidebarWidth, bodyHeight), body)
+	if viewportCount > 0 && viewportCount < len(m.columns) {
+		sections = append(sections, taskStyle.Render(fmt.Sprintf("Kanban viewport: %d/%d columns visible (h/l to switch)", viewportCount, len(m.columns))))
 	}
-	return m.frame(header, body, help)
+	sections = append(sections, kanbanBox)
+	if strings.TrimSpace(viewportFooter) != "" {
+		sections = append(sections, taskStyle.Render(viewportFooter))
+	}
+	body := strings.Join(sections, "\n")
+	if panelHeight > 0 {
+		body = clampToHeight(padToHeight(body, panelHeight), panelHeight)
+	}
+	return body
 }
 
-func (m Model) columnWidthFor(totalWidth int) int {
-	count := len(m.columns)
+func (m Model) renderKanbanViewportFooter(start, visible int) string {
+	total := len(m.columns)
+	if total == 0 || visible == 0 || visible >= total {
+		return ""
+	}
+	end := start + visible
+	if end > total {
+		end = total
+	}
+	left := " "
+	if start > 0 {
+		left = "←"
+	}
+	right := " "
+	if end < total {
+		right = "→"
+	}
+
+	activeLabel := "n/a"
+	if m.active >= 0 && m.active < total {
+		label := strings.TrimSpace(m.columns[m.active].Title)
+		if label == "" {
+			label = strings.TrimSpace(m.columns[m.active].Key)
+		}
+		if label == "" {
+			label = "column"
+		}
+		activeLabel = fmt.Sprintf("%s (%d/%d)", label, m.active+1, total)
+	}
+
+	return fmt.Sprintf("%s %d-%d/%d %s  •  Active: %s", left, start+1, end, total, right, activeLabel)
+}
+
+func (m Model) boardUsesListViewForWidth(panelWidth int) bool {
+	return m.boardListView
+}
+
+func (m Model) boardKanbanViewport(panelWidth int) (int, int, int) {
+	totalColumns := len(m.columns)
+	if totalColumns == 0 {
+		return 0, 0, 24
+	}
+	if panelWidth <= 0 {
+		return 0, totalColumns, 30
+	}
+
+	const (
+		kanbanFrameWidth   = 4
+		perColumnAllowance = 4
+		minColumnWidth     = 24
+		columnGap          = 2
+	)
+	maxVisible := totalColumns
+	for visible := totalColumns; visible >= 1; visible-- {
+		columnAreaWidth := panelWidth - kanbanFrameWidth - (perColumnAllowance * visible)
+		if columnAreaWidth <= 0 {
+			continue
+		}
+		required := (visible * minColumnWidth) + ((visible - 1) * columnGap)
+		if columnAreaWidth >= required {
+			maxVisible = visible
+			break
+		}
+		if visible == 1 {
+			maxVisible = 1
+		}
+	}
+
+	columnAreaWidth := panelWidth - kanbanFrameWidth - (perColumnAllowance * maxVisible)
+	if columnAreaWidth < 0 {
+		columnAreaWidth = 0
+	}
+	columnWidth := m.columnWidthForCount(columnAreaWidth, maxVisible)
+	start := 0
+	if maxVisible < totalColumns {
+		start = m.active - (maxVisible - 1)
+		if start < 0 {
+			start = 0
+		}
+		if start > totalColumns-maxVisible {
+			start = totalColumns - maxVisible
+		}
+	}
+	return start, maxVisible, columnWidth
+}
+
+func (m Model) renderBoardListPanel(panelWidth, panelHeight int) string {
+	entries := m.boardListEntries()
+	filterSummary := m.boardFilterSummary()
+	sortSummary := m.boardSortSummary()
+
+	lines := []string{
+		headerStyle.Render("List view"),
+		taskStyle.Render(fmt.Sprintf("Filters [%s]   Sort [%s]   View [List]", filterSummary, sortSummary)),
+		taskStyle.Render("F: filters  O: sort  L: kanban"),
+		"",
+	}
+
+	boxWidth := boxedContentWidth(panelWidth)
+	if boxWidth <= 0 {
+		boxWidth = 96
+	}
+	idW := 8
+	statusW := 8
+	priW := 3
+	tagsW := 14
+	createdW := 10
+	depsW := 12
+	fixed := idW + statusW + priW + tagsW + createdW + depsW + (6 * 3)
+	titleW := boxWidth - fixed
+	if titleW < 18 {
+		titleW = 18
+	}
+	header := fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s %-*s", idW, "ID", statusW, "Status", priW, "Pri", titleW, "Title", tagsW, "Tags", createdW, "Created", depsW, "Deps")
+	lines = append(lines, headerStyle.Render(fitText(header, boxWidth)))
+
+	if len(entries) == 0 {
+		lines = append(lines, taskStyle.Render("No tasks"))
+	} else {
+		taskIndex := buildTaskIndex(m.columns)
+		for _, entry := range entries {
+			task := entry.Task
+			status := strings.TrimSpace(task.Status)
+			if status == "" {
+				status = "-"
+			}
+			priority := fmt.Sprintf("P%d", effectivePriority(task.Priority))
+			title := fitText(strings.TrimSpace(task.Title), titleW)
+			tags := "-"
+			if len(task.Tags) > 0 {
+				tags = strings.Join(task.Tags, ",")
+			}
+			tags = fitText(tags, tagsW)
+			created := "-"
+			if !task.Created.IsZero() {
+				created = task.Created.Format("2006-01-02")
+			}
+			deps := "-"
+			if len(task.DependsOn) > 0 {
+				deps = strings.Join(task.DependsOn, ",")
+			}
+			ready, _ := board.IsReady(task, taskIndex)
+			if !ready && deps == "-" {
+				deps = "blocked"
+			}
+			deps = fitText(deps, depsW)
+
+			row := fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s %-*s", idW, fitText(task.ID, idW), statusW, fitText(status, statusW), priW, fitText(priority, priW), titleW, title, tagsW, tags, createdW, fitText(created, createdW), depsW, deps)
+			row = fitText(row, boxWidth)
+			if entry.Ref.ColumnIndex == m.active && entry.Ref.TaskIndex == m.columns[entry.Ref.ColumnIndex].Selected {
+				lines = append(lines, selectedTask.Render(row))
+			} else {
+				lines = append(lines, taskStyle.Render(row))
+			}
+		}
+	}
+
+	body := strings.Join(lines, "\n")
+	style := kanbanStyle
+	if boxWidth > 0 {
+		style = style.Width(boxWidth)
+	}
+	if panelHeight > 0 {
+		contentHeight := max(0, panelHeight-2)
+		if contentHeight > 0 {
+			style = style.Height(contentHeight)
+			body = clampToHeight(padToHeight(body, contentHeight), contentHeight)
+		}
+	}
+	return style.Render(body)
+}
+
+func (m Model) boardFilterSummary() string {
+	parts := make([]string, 0, 3)
+	if strings.TrimSpace(m.boardFilterStatus) != "" {
+		parts = append(parts, "status:"+m.boardFilterStatus)
+	}
+	if strings.TrimSpace(m.boardFilterTitle) != "" {
+		parts = append(parts, "title:"+m.boardFilterTitle)
+	}
+	if len(m.boardFilterTags) > 0 {
+		parts = append(parts, "tags:"+strings.Join(m.boardFilterTags, ","))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, " ")
+}
+
+func (m Model) boardSortSummary() string {
+	sortBy := strings.TrimSpace(m.boardSortBy)
+	if sortBy == "" {
+		sortBy = "readiness"
+	}
+	dir := "asc"
+	if m.boardSortDesc {
+		dir = "desc"
+	}
+	return sortBy + " " + dir
+}
+
+func (m Model) columnWidthForCount(totalWidth, count int) int {
 	if count == 0 {
 		return 24
 	}
@@ -248,11 +491,8 @@ func (m Model) sidebarWidth() int {
 	if m.width == 0 {
 		return 0
 	}
-	if m.width < 100 {
+	if m.width < 90 {
 		return 0
-	}
-	if m.width >= 140 {
-		return 28
 	}
 	return 26
 }
@@ -324,20 +564,109 @@ func (m Model) renderContextBlock() string {
 }
 
 func (m Model) renderBoardInfoBox(width int) string {
-	lines := m.contextLines()
+	lines := []string{taskStyle.Render(m.boardStatsSummary())}
+	lines = append(lines, m.contextLines()...)
 	if len(lines) == 0 {
 		lines = []string{taskStyle.Render("(empty)")}
 	}
 	body := fmt.Sprintf("%s\n%s", headerStyle.Render("Board Info"), strings.Join(lines, "\n"))
 	style := infoBoxStyle
 	if width > 0 {
-		style = style.Width(width)
+		style = style.Width(boxedContentWidth(width))
 	}
 	return style.Render(body)
 }
 
+func (m Model) renderBoardPreviewPanel(width, height int) string {
+	lines := []string{headerStyle.Render("Board info")}
+	selected, ok := m.selectedBoard()
+	if !ok {
+		lines = append(lines, taskStyle.Render("No board selected"))
+	} else {
+		preview := m.boardPreview
+		if preview.BoardID != selected.ID {
+			preview = boardPreviewData{
+				BoardID:   selected.ID,
+				BoardName: selected.Name,
+				Archived:  selected.Archived,
+			}
+			if !selected.Created.IsZero() {
+				preview.Created = selected.Created.Format("2006-01-02")
+			}
+		}
+
+		name := strings.TrimSpace(preview.BoardName)
+		if name == "" {
+			name = selected.ID
+		}
+		lines = append(lines, taskStyle.Render(fmt.Sprintf("Name: %s", name)))
+		if preview.Archived {
+			lines = append(lines, taskStyle.Render("Status: Archived"))
+		} else {
+			lines = append(lines, taskStyle.Render("Status: Active"))
+		}
+		if preview.Loaded {
+			lines = append(lines, taskStyle.Render(fmt.Sprintf("Tasks: %d (Open %d / Doing %d / Done %d)", preview.Total, preview.Open, preview.Doing, preview.Done)))
+			lines = append(lines, taskStyle.Render(fmt.Sprintf("Archived tasks: %d", preview.ArchivedTasks)))
+			lines = append(lines, taskStyle.Render(fmt.Sprintf("Last activity: %s", preview.LastActivity)))
+		}
+		if strings.TrimSpace(preview.Created) != "" {
+			lines = append(lines, taskStyle.Render(fmt.Sprintf("Created: %s", preview.Created)))
+		}
+		lines = append(lines, "")
+		lines = append(lines, taskStyle.Render(fmt.Sprintf("ID: %s", selected.ID)))
+		contextLines := m.contextLinesFor(preview.Context)
+		if len(contextLines) > 0 {
+			lines = append(lines, contextLines...)
+		}
+		if m.boardPreviewLoading {
+			lines = append(lines, "")
+			lines = append(lines, taskStyle.Render("Loading board info..."))
+		} else if strings.TrimSpace(preview.Error) != "" {
+			lines = append(lines, "")
+			lines = append(lines, taskStyle.Render(fmt.Sprintf("Info unavailable: %s", preview.Error)))
+		}
+	}
+
+	body := strings.Join(lines, "\n")
+	style := infoBoxStyle
+	if width > 0 {
+		style = style.Width(boxedContentWidth(width))
+	}
+	if height > 0 {
+		contentHeight := max(0, height-2)
+		if contentHeight > 0 {
+			style = style.Height(contentHeight)
+		}
+	}
+	return style.Render(body)
+}
+
+func (m Model) boardStatsSummary() string {
+	total := 0
+	doing := 0
+	done := 0
+	for _, column := range m.columns {
+		count := len(column.Tasks)
+		total += count
+		key := strings.ToLower(strings.TrimSpace(column.Key))
+		switch key {
+		case "doing", "in-progress", "in_progress":
+			doing += count
+		case "done":
+			done += count
+		}
+	}
+	open := total - done
+	archived := len(m.archived)
+	return fmt.Sprintf("Stats  Open:%d  Doing:%d  Done:%d  Archived:%d", open, doing, done, archived)
+}
+
 func (m Model) contextLines() []string {
-	ctx := m.boardContext
+	return m.contextLinesFor(m.boardContext)
+}
+
+func (m Model) contextLinesFor(ctx board.BoardContext) []string {
 	lines := make([]string, 0)
 	addLine := func(label, value string) {
 		if strings.TrimSpace(value) == "" {
@@ -380,7 +709,10 @@ func (m Model) renderBoardSidebar(width, height int) string {
 		}
 	}
 	body := strings.Join(lines, "\n")
-	style := sidebarStyle.Width(width)
+	style := sidebarStyle
+	if width > 0 {
+		style = style.Width(boxedContentWidth(width))
+	}
 	if height > 0 {
 		contentHeight := max(0, height-2)
 		if contentHeight > 0 {
@@ -480,30 +812,96 @@ func (m Model) viewBoardDetail() string {
 	}
 
 	body := strings.Join(lines, "\n")
-	help := "e edit • ctrl+r/F5 refresh • x actions • b boards • esc back"
+	helpParts := []string{"e edit", "ctrl+r/F5 refresh", "x actions"}
+	if m.sidebarWidth() > 0 {
+		helpParts = append(helpParts, "b boards")
+	}
+	helpParts = append(helpParts, "esc back")
+	help := strings.Join(helpParts, " • ")
 	return m.frame(title, body, help)
+}
+
+func (m Model) viewBoardFilter() string {
+	title := "Board Filter"
+	prompt := "Status filter"
+	switch m.boardFilterMode {
+	case boardListFilterTitle:
+		prompt = "Title filter"
+	case boardListFilterTags:
+		prompt = "Tag filter (comma-separated)"
+	}
+	lines := []string{
+		headerStyle.Render(prompt),
+		"",
+		taskStyle.Render(m.boardFilterInput),
+	}
+	body := strings.Join(lines, "\n")
+	help := "enter apply • esc cancel"
+	return m.renderModalOverlay(title, body, help)
+}
+
+func (m Model) viewBoardFilterMenu() string {
+	items := boardFilterMenuItems()
+	lines := make([]string, 0, len(items)+2)
+	lines = append(lines, headerStyle.Render("Board Filters"), "")
+	for i, item := range items {
+		if i == m.boardListAction {
+			lines = append(lines, selectedTask.Render(item.label))
+			continue
+		}
+		lines = append(lines, taskStyle.Render(item.label))
+	}
+	body := strings.Join(lines, "\n")
+	help := "j/k move • enter select • esc back"
+	return m.renderModalOverlay("Board Filters", body, help)
+}
+
+func (m Model) viewBoardSortMenu() string {
+	items := boardSortMenuItems()
+	lines := make([]string, 0, len(items)+3)
+	lines = append(lines, headerStyle.Render("Board Sort"), "")
+	lines = append(lines, taskStyle.Render("Current: "+m.boardSortSummary()))
+	lines = append(lines, "")
+	for i, item := range items {
+		if i == m.boardListAction {
+			lines = append(lines, selectedTask.Render(item.label))
+			continue
+		}
+		lines = append(lines, taskStyle.Render(item.label))
+	}
+	body := strings.Join(lines, "\n")
+	help := "j/k move • enter select • esc back"
+	return m.renderModalOverlay("Board Sort", body, help)
 }
 
 func (m Model) viewConfirm() string {
 	message := "Confirm action?"
+	actionHint := "[y] Confirm   [n] Cancel"
+	messageStyle := taskStyle
 	switch m.confirmAction {
 	case confirmArchiveBoard:
 		message = fmt.Sprintf("Archive board %q?", m.confirmBoard)
 	case confirmDeleteBoard:
 		message = fmt.Sprintf("Delete board %q? This cannot be undone.", m.confirmBoard)
+		messageStyle = errorStyle
+		actionHint = "[y] Delete (danger)   [n] Cancel"
 	case confirmArchiveTask:
 		message = fmt.Sprintf("Archive task %q?", m.confirmTask)
 	case confirmDeleteTask:
 		message = fmt.Sprintf("Delete task %q? This cannot be undone.", m.confirmTask)
+		messageStyle = errorStyle
+		actionHint = "[y] Delete (danger)   [n] Cancel"
 	case confirmDeleteADR:
 		message = fmt.Sprintf("Delete ADR %s? This cannot be undone.", adr.FormatID(m.confirmADR))
+		messageStyle = errorStyle
+		actionHint = "[y] Delete (danger)   [n] Cancel"
 	}
 	lines := []string{
 		headerStyle.Render("Confirm"),
 		"",
-		taskStyle.Render(message),
+		messageStyle.Render(message),
 		"",
-		taskStyle.Render("[y] confirm  [n] cancel"),
+		taskStyle.Render(actionHint),
 	}
 	body := strings.Join(lines, "\n")
 	help := "y confirm • n cancel"
@@ -609,7 +1007,7 @@ func (m Model) viewTaskDetail() string {
 		lines = append(lines, taskStyle.Render("(empty)"))
 	}
 	body := strings.Join(lines, "\n")
-	help := "tab next • enter edit • a archive • d delete • e editor • x actions • esc back"
+	help := "↑/↓ field • enter edit • a archive • d delete • e editor • x actions • esc back"
 	return m.frame("Task Detail", body, help)
 }
 
@@ -700,7 +1098,7 @@ func (m Model) viewWikiFilterMenu() string {
 }
 
 func (m Model) viewWiki() string {
-	header := "mochi-sticky • Wiki"
+	header := "Wiki ▸ Navigation"
 	help := m.wikiHelpText()
 	body := m.renderWikiLayout(header, help)
 	return m.frame(header, body, help)
@@ -743,7 +1141,8 @@ func (m Model) renderWikiList() string {
 func (m Model) renderWikiLayout(header, help string) string {
 	navContent := m.renderWikiNavContent()
 	infoContent := m.renderWikiInfoContent()
-	pageContent := m.renderWikiPageContent()
+	pageHeight := m.wikiContentViewportHeight()
+	pageContent := m.renderWikiPageContent(pageHeight)
 
 	if m.width <= 0 {
 		parts := []string{
@@ -763,8 +1162,20 @@ func (m Model) renderWikiLayout(header, help string) string {
 		rightWidth = 0
 	}
 
-	infoBox := infoBoxStyle.Width(rightWidth).Render(infoContent)
-	contentBox := kanbanStyle.Width(rightWidth).Render(pageContent)
+	infoBoxWidth := boxedContentWidth(rightWidth)
+	infoBoxStyleSized := infoBoxStyle
+	if infoBoxWidth > 0 {
+		infoBoxStyleSized = infoBoxStyleSized.Width(infoBoxWidth)
+	}
+	infoBox := infoBoxStyleSized.Render(infoContent)
+	contentBoxStyle := kanbanStyle
+	if infoBoxWidth > 0 {
+		contentBoxStyle = contentBoxStyle.Width(infoBoxWidth)
+	}
+	if m.wikiFocus == focusWikiContent {
+		contentBoxStyle = contentBoxStyle.BorderForeground(accentSoft)
+	}
+	contentBox := contentBoxStyle.Render(pageContent)
 	rightPanel := strings.Join([]string{infoBox, "", contentBox}, "\n")
 
 	availableHeight := m.bodyHeight(header, help)
@@ -780,7 +1191,14 @@ func (m Model) renderWikiLayout(header, help string) string {
 		}
 		navText = padToHeight(clampToHeight(navText, navContentHeight), navContentHeight)
 	}
-	navPanel := sidebarStyle.Width(navWidth).Render(navText)
+	navStyleSized := sidebarStyle
+	if m.wikiFocus == focusWikiNav {
+		navStyleSized = navStyleSized.BorderForeground(accentSoft)
+	}
+	if navInner := boxedContentWidth(navWidth); navInner > 0 {
+		navStyleSized = navStyleSized.Width(navInner)
+	}
+	navPanel := navStyleSized.Render(navText)
 
 	separator := strings.Repeat(" ", gap)
 	return lipgloss.JoinHorizontal(lipgloss.Top, navPanel, separator, rightPanel)
@@ -867,7 +1285,7 @@ func (m Model) renderWikiInfoContent() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderWikiPageContent() string {
+func (m Model) renderWikiPageContent(maxLines int) string {
 	item, ok := m.currentWikiSelection()
 	if !ok || item.Kind != wikiItemPage {
 		return taskStyle.Render("Select a page to read its content.")
@@ -884,7 +1302,70 @@ func (m Model) renderWikiPageContent() string {
 	if len(terms) > 0 {
 		content = highlightTerms(content, terms, accentSoft)
 	}
+	lines := strings.Split(content, "\n")
+	totalLines := len(lines)
+	if maxLines > 0 && totalLines > maxLines {
+		offset := m.wikiContentOffset
+		maxOffset := totalLines - maxLines
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		if offset > maxOffset {
+			offset = maxOffset
+		}
+		end := offset + maxLines
+		if end > totalLines {
+			end = totalLines
+		}
+		visible := lines[offset:end]
+		scrollInfo := fmt.Sprintf("[lines %d-%d/%d]", offset+1, end, totalLines)
+		if len(visible) >= 2 {
+			visible = append(visible[:len(visible)-1], scrollInfo)
+		} else {
+			visible = []string{scrollInfo}
+		}
+		lines = visible
+	}
+	content = strings.Join(lines, "\n")
 	return taskStyle.Render(content)
+}
+
+func (m Model) wikiContentViewportHeight() int {
+	if m.width <= 0 || m.height <= 0 {
+		return 0
+	}
+	header := "Wiki ▸ Navigation"
+	help := m.wikiHelpText()
+	availableHeight := m.bodyHeight(header, help)
+	if availableHeight <= 0 {
+		return 0
+	}
+
+	gap := 1
+	navWidth := m.wikiNavWidth(gap)
+	rightWidth := m.width - navWidth - gap
+	if rightWidth < 0 {
+		rightWidth = 0
+	}
+	infoBoxWidth := boxedContentWidth(rightWidth)
+	infoBoxStyleSized := infoBoxStyle
+	if infoBoxWidth > 0 {
+		infoBoxStyleSized = infoBoxStyleSized.Width(infoBoxWidth)
+	}
+	infoBox := infoBoxStyleSized.Render(m.renderWikiInfoContent())
+	infoHeight := lipgloss.Height(infoBox)
+	contentHeight := availableHeight - infoHeight - 1
+	if contentHeight < 3 {
+		return 1
+	}
+	innerHeight := contentHeight - 2
+	if innerHeight < 1 {
+		return 1
+	}
+	return innerHeight
 }
 
 func (m Model) wikiNavWidth(gap int) int {
@@ -909,23 +1390,40 @@ func (m Model) wikiNavWidth(gap int) int {
 }
 
 func (m Model) wikiHelpText() string {
-	base := "j/k move • enter pager • e edit • x actions • f filters • E/P export all • ctrl+r/F5 refresh • b/esc back • q quit"
-	if summary := m.wikiFilterSummaryShort(); summary != "" {
-		return base + " • " + summary
+	parts := make([]string, 0, 12)
+	if m.wikiFocus == focusWikiContent {
+		parts = append(parts, "j/k scroll preview", "tab nav panel")
+	} else {
+		if len(m.wikiItems) > 1 {
+			parts = append(parts, "j/k move")
+		}
+		parts = append(parts, "tab content panel")
 	}
-	return base
+	if item, ok := m.currentWikiSelection(); ok && item.Kind == wikiItemPage {
+		parts = append(parts, "enter pager", "e edit")
+	}
+	parts = append(parts,
+		"x actions",
+		"f filters",
+		"E/P export all",
+		"alt+1/2/3 or F1/F2/F3 tabs",
+		"ctrl+r/F5 refresh",
+		"b/esc/q back",
+	)
+	if summary := m.wikiFilterSummaryShort(); summary != "" {
+		parts = append(parts, summary)
+	}
+	return strings.Join(parts, " • ")
 }
 
 func (m Model) bodyHeight(header, footer string) int {
 	if m.height <= 0 {
 		return 0
 	}
-	headerHeight := lipgloss.Height(m.renderBar(header, barStyle))
-	footerHeight := 0
-	if strings.TrimSpace(footer) != "" {
-		footerHeight = lipgloss.Height(m.renderBar(footer, footerStyle))
-	}
-	footerGap := footerGapFor(footer)
+	headerHeight := lipgloss.Height(m.renderHeader(header))
+	footerText := m.footerText(footer)
+	footerHeight := lipgloss.Height(m.renderBar(footerText, footerStyle))
+	footerGap := footerGapFor(footerText)
 	available := m.height - headerHeight - footerHeight - footerGap
 	if available < 0 {
 		return 0
@@ -934,7 +1432,7 @@ func (m Model) bodyHeight(header, footer string) int {
 }
 
 func (m Model) renderWikiModalOverlay(title, body, help string) string {
-	header := "mochi-sticky • Wiki"
+	header := "Wiki ▸ Navigation"
 	background := m.frame(header, m.renderWikiLayout(header, m.wikiHelpText()), m.wikiHelpText())
 	modal := m.renderModalBox(body)
 
@@ -1116,40 +1614,57 @@ func (m Model) activeBoardName() string {
 }
 
 func (m Model) fieldLine(label, value string, field detailField) string {
-	line := fmt.Sprintf("%s: %s", label, value)
+	line := fmt.Sprintf("✎ %s: %s", label, value)
 	if m.detailField == field {
-		return selectedTask.Render(line)
+		return editableFieldFocus.Render(line)
 	}
-	return taskStyle.Render(line)
+	return editableField.Render(line)
 }
 
 func (m Model) frame(title, body, footer string) string {
-	head := m.renderBar(title, barStyle)
-	foot := ""
-	if strings.TrimSpace(footer) != "" {
-		foot = m.renderBar(footer, footerStyle)
-	}
-	footerGap := footerGapFor(footer)
+	head := m.renderHeader(title)
+	footerText := m.footerText(footer)
+	foot := m.renderBar(footerText, footerStyle)
+	toast := m.renderToastBar()
+	footerGap := footerGapFor(footerText)
 	if m.height > 0 {
 		headerHeight := lipgloss.Height(head)
-		footerHeight := 0
-		if foot != "" {
-			footerHeight = lipgloss.Height(foot)
-		}
-		available := m.height - headerHeight - footerHeight - footerGap
+		footerHeight := lipgloss.Height(foot)
+		toastHeight := lipgloss.Height(toast)
+		available := m.height - headerHeight - footerHeight - footerGap - toastHeight
 		if available > 0 {
 			body = clampToHeight(body, available)
 			body = padToHeight(body, available)
 		}
 	}
 	parts := []string{head, body}
-	if foot != "" {
-		for i := 0; i < footerGap; i++ {
-			parts = append(parts, "")
-		}
-		parts = append(parts, foot)
+	if strings.TrimSpace(toast) != "" {
+		parts = append(parts, toast)
 	}
+	for i := 0; i < footerGap; i++ {
+		parts = append(parts, "")
+	}
+	parts = append(parts, foot)
 	return strings.Join(parts, "\n")
+}
+
+func (m Model) renderToastBar() string {
+	if len(m.toastQueue) == 0 {
+		return ""
+	}
+	item := m.toastQueue[len(m.toastQueue)-1]
+	prefix := "INFO"
+	style := toastInfoStyle
+	switch item.Level {
+	case toastSuccess:
+		prefix = "SUCCESS"
+		style = toastSuccessStyle
+	case toastError:
+		prefix = "ERROR"
+		style = toastErrorStyle
+	}
+	content := fmt.Sprintf("%s: %s", style.Render(prefix), item.Message)
+	return m.renderBar(content, toastStyle)
 }
 
 func (m Model) renderBar(content string, style lipgloss.Style) string {
@@ -1166,23 +1681,155 @@ func footerGapFor(footer string) int {
 	return 2
 }
 
-func (m Model) boardHelpText() string {
-	if m.boardFocus == focusBoards && m.sidebarWidth() > 0 {
-		return "j/k boards • enter use • a add board • e edit board • i board detail • x board actions • w wiki • d adrs • tab/b kanban • ctrl+r/F5 refresh • q quit"
+func boxedContentWidth(total int) int {
+	if total <= 0 {
+		return 0
 	}
-	return "h/l columns • j/k tasks • a add task • x task actions • i task info • m/M move • z archive • w wiki • d adrs • tab/b boards • ctrl+r/F5 refresh • q quit"
+	if total <= 4 {
+		return 1
+	}
+	return total - 4
+}
+
+func (m Model) renderHeader(title string) string {
+	lines := []string{
+		m.renderBar(m.renderTabBar(), barStyle),
+		m.renderBar(title, barStyle),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderTabBar() string {
+	active := inferTabFromScreen(m.screen, m.confirmAction)
+	tabs := []struct {
+		tab   appTab
+		label string
+	}{
+		{tab: tabBoards, label: "Boards"},
+		{tab: tabWiki, label: "Wiki"},
+		{tab: tabADR, label: "ADRs"},
+	}
+	parts := make([]string, 0, len(tabs)+1)
+	parts = append(parts, "Tabs:")
+	for _, item := range tabs {
+		if item.tab == active {
+			parts = append(parts, tabActive.Render(item.label))
+			continue
+		}
+		parts = append(parts, tabInactive.Render(item.label))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (m Model) footerText(help string) string {
+	parts := make([]string, 0, 2)
+	if trimmed := strings.TrimSpace(help); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	parts = append(parts, m.statusLine())
+	return strings.Join(parts, " • ")
+}
+
+func (m Model) statusLine() string {
+	tabLabel := "Boards"
+	switch inferTabFromScreen(m.screen, m.confirmAction) {
+	case tabWiki:
+		tabLabel = "Wiki"
+	case tabADR:
+		tabLabel = "ADRs"
+	}
+
+	state := "Ready"
+	if m.loading {
+		state = "Loading"
+		if strings.TrimSpace(m.loadingMessage) != "" {
+			state = m.loadingMessage
+		}
+	}
+	parts := []string{state}
+	if m.screen != screenTaskDetail {
+		parts = append(parts, fmt.Sprintf("Tab: %s", tabLabel))
+	}
+	if m.width > 0 && m.height > 0 {
+		parts = append(parts, fmt.Sprintf("Size: %dx%d", m.width, m.height))
+	}
+	return strings.Join(parts, " • ")
+}
+
+func (m Model) boardHelpText() string {
+	parts := make([]string, 0, 12)
+	if m.boardFocus == focusBoards {
+		_, hasBoard := m.selectedBoard()
+		if len(m.boards) > 1 {
+			parts = append(parts, "j/k boards")
+		}
+		if hasBoard {
+			parts = append(parts, "enter open board")
+		}
+		parts = append(parts, "a add board")
+		if hasBoard {
+			parts = append(parts, "e edit board", "i board detail", "x board actions")
+		}
+		parts = append(parts,
+			"alt+1/2/3 or F1/F2/F3 tabs",
+			"tab/b tasks",
+			"ctrl+r/F5 refresh",
+			"q quit",
+		)
+		return strings.Join(parts, " • ")
+	}
+
+	listView := m.boardUsesListView()
+	if !listView && len(m.columns) > 1 {
+		parts = append(parts, "h/l columns")
+	}
+	if listView {
+		if len(m.boardListEntries()) > 1 {
+			parts = append(parts, "j/k tasks")
+		}
+	} else if m.active >= 0 && m.active < len(m.columns) && len(m.columns[m.active].Tasks) > 1 {
+		parts = append(parts, "j/k tasks")
+	}
+	parts = append(parts, "F filters")
+	if listView {
+		parts = append(parts, "O sort")
+	}
+	if listView {
+		parts = append(parts, "L kanban")
+	} else {
+		parts = append(parts, "L list")
+	}
+	parts = append(parts, "a add task")
+	if m.currentTaskExists() {
+		parts = append(parts, "x task actions", "i task info")
+	}
+	if m.canMoveSelectedTaskForward() {
+		parts = append(parts, "m move")
+	}
+	if m.canMoveSelectedTaskBack() {
+		parts = append(parts, "M move back")
+	}
+	parts = append(parts, "z archive")
+	boardsFocusAvailable := m.sidebarWidth() > 0 || (m.width > 0 && m.width < 90)
+	if boardsFocusAvailable {
+		parts = append(parts, "tab/b boards")
+	}
+	parts = append(parts,
+		"alt+1/2/3 or F1/F2/F3 tabs",
+		"ctrl+r/F5 refresh",
+		"q quit",
+	)
+	return strings.Join(parts, " • ")
 }
 
 func (m Model) renderModal(title, body, help string) string {
 	modal := m.renderModalBox(body)
 
 	if m.height > 0 && m.width > 0 {
-		headerHeight := lipgloss.Height(m.renderBar(title, barStyle))
-		footerHeight := 0
-		if strings.TrimSpace(help) != "" {
-			footerHeight = lipgloss.Height(m.renderBar(help, footerStyle))
-		}
-		footerGap := footerGapFor(help)
+		headerHeight := lipgloss.Height(m.renderHeader(title))
+		footerText := m.footerText(help)
+		footerHeight := lipgloss.Height(m.renderBar(footerText, footerStyle))
+		footerGap := footerGapFor(footerText)
 		availableHeight := m.height - headerHeight - footerHeight - footerGap
 		if availableHeight < 0 {
 			availableHeight = 0
@@ -1353,6 +2000,33 @@ func sliceANSI(line string, start, end int) string {
 	}
 
 	return buf.String()
+}
+
+func fitText(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "-"
+	}
+	if runewidth.StringWidth(trimmed) <= width {
+		return trimmed
+	}
+	if width <= 1 {
+		return "…"
+	}
+	var buf strings.Builder
+	current := 0
+	for _, r := range trimmed {
+		rw := runewidth.RuneWidth(r)
+		if current+rw >= width {
+			break
+		}
+		buf.WriteRune(r)
+		current += rw
+	}
+	return strings.TrimSpace(buf.String()) + "…"
 }
 
 func padToHeight(body string, height int) string {

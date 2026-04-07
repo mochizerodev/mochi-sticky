@@ -37,6 +37,9 @@ const (
 	screenBoardActions
 	screenBoardEdit
 	screenBoardDetail
+	screenBoardFilter
+	screenBoardFilterMenu
+	screenBoardSortMenu
 	screenConfirm
 	screenTaskActions
 	screenStatusPicker
@@ -55,11 +58,26 @@ const (
 	screenADRDetail
 )
 
+type appTab int
+
+const (
+	tabBoards appTab = iota
+	tabWiki
+	tabADR
+)
+
 type boardFocus int
 
 const (
 	focusKanban boardFocus = iota
 	focusBoards
+)
+
+type wikiFocus int
+
+const (
+	focusWikiNav wikiFocus = iota
+	focusWikiContent
 )
 
 type boardEditMode int
@@ -76,6 +94,14 @@ const (
 	editTags
 	editDescription
 	editPriority
+)
+
+type boardListFilterMode int
+
+const (
+	boardListFilterStatus boardListFilterMode = iota
+	boardListFilterTitle
+	boardListFilterTags
 )
 
 type confirmAction int
@@ -112,6 +138,7 @@ type Model struct {
 	activeBoard          string
 	boardDesc            string
 	boardContext         board.BoardContext
+	boardPreview         boardPreviewData
 	selectedTaskID       string
 	boardIndex           int
 	boardAction          int
@@ -148,12 +175,30 @@ type Model struct {
 	pendingRefresh       bool
 	pendingBoardDescEdit bool
 	pendingBoardDetail   bool
+	boardPreviewLoading  bool
+	boardListView        bool
+	boardForceKanban     bool
+	boardListAction      int
+	boardFilterMode      boardListFilterMode
+	boardFilterInput     string
+	boardFilterStatus    string
+	boardFilterTitle     string
+	boardFilterTags      []string
+	boardSortBy          string
+	boardSortDesc        bool
+	pendingSuccessToast  string
+	toastQueue           []toastMessage
 	err                  error
+	activeTab            appTab
+	boardTabScreen       screen
+	wikiTabScreen        screen
+	adrTabScreen         screen
 	wikiItems            []wikiNavItem
 	wikiIndex            int
 	wikiPages            map[string]wiki.Page
 	wikiStatus           string
 	wikiNav              []wiki.NavNode
+	wikiLoaded           bool
 	wikiQuery            string
 	wikiFilterTitle      string
 	wikiFilterSection    string
@@ -161,6 +206,8 @@ type Model struct {
 	wikiFilterTagMode    string
 	wikiFilterInput      string
 	wikiFilterMode       wikiFilterMode
+	wikiFocus            wikiFocus
+	wikiContentOffset    int
 	adrColumns           []adrColumnModel
 	adrStatusColumns     []adr.Column
 	adrActive            int
@@ -171,15 +218,51 @@ type Model struct {
 	adrTags              string
 	adrStatus            string
 	adrField             int
+	adrLoaded            bool
+}
+
+type boardPreviewData struct {
+	BoardID       string
+	BoardName     string
+	Archived      bool
+	Created       string
+	Total         int
+	Open          int
+	Doing         int
+	Done          int
+	ArchivedTasks int
+	LastActivity  string
+	Context       board.BoardContext
+	Loaded        bool
+	Error         string
+}
+
+type toastLevel int
+
+const (
+	toastInfo toastLevel = iota
+	toastSuccess
+	toastError
+)
+
+type toastMessage struct {
+	Level   toastLevel
+	Message string
 }
 
 // NewModel creates a TUI model backed by a repository.
 func NewModel(repo *board.Repository, boardRepo *board.BoardRepository, baseDir string) Model {
 	return Model{
-		repo:      repo,
-		boardRepo: boardRepo,
-		baseDir:   baseDir,
-		loading:   true,
+		repo:           repo,
+		boardRepo:      boardRepo,
+		baseDir:        baseDir,
+		loading:        true,
+		boardFocus:     focusBoards,
+		activeTab:      tabBoards,
+		boardTabScreen: screenBoard,
+		wikiTabScreen:  screenWiki,
+		adrTabScreen:   screenADR,
+		wikiFocus:      focusWikiNav,
 	}
 }
 
@@ -218,6 +301,34 @@ func (m Model) cancelInFlight() Model {
 	return m
 }
 
+func (m *Model) pushToast(level toastLevel, message string) {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return
+	}
+	m.toastQueue = append(m.toastQueue, toastMessage{Level: level, Message: trimmed})
+	const maxQueue = 3
+	if len(m.toastQueue) > maxQueue {
+		m.toastQueue = m.toastQueue[len(m.toastQueue)-maxQueue:]
+	}
+}
+
+func (m *Model) pushSuccessToast(message string) {
+	m.pushToast(toastSuccess, message)
+}
+
+func (m *Model) pushErrorToast(message string) {
+	m.pushToast(toastError, message)
+}
+
+func (m *Model) consumePendingSuccessToast() {
+	if strings.TrimSpace(m.pendingSuccessToast) == "" {
+		return
+	}
+	m.pushSuccessToast(m.pendingSuccessToast)
+	m.pendingSuccessToast = ""
+}
+
 // Update handles keyboard input and state updates.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -236,6 +347,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.boardContext = msg.context
 		m.loading = false
 		m.loadingMessage = ""
+		m.consumePendingSuccessToast()
 		if m.active >= len(m.columns) {
 			m.active = max(0, len(m.columns)-1)
 		}
@@ -269,6 +381,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.boards = msg.boards
 		m.activeBoard = msg.active
 		m.boardIndex = clampBoardIndex(m.boards, m.boardIndex, m.activeBoard)
+		previewCmd := m.loadBoardPreviewCmd()
 		if m.pendingRefresh {
 			m.pendingRefresh = false
 			if m.repo == nil {
@@ -284,9 +397,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.repo = newRepo
 			}
 			m.loading = true
-			return m.withInFlight(func(ctx context.Context) tea.Cmd {
+			next, cmd := m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return loadStateCmdContext(ctx, m.repo)
 			})
+			if previewCmd != nil {
+				return next, tea.Batch(cmd, previewCmd)
+			}
+			return next, cmd
 		}
 		if m.repo != nil && strings.TrimSpace(msg.active) != "" && msg.active != m.repo.BoardID() {
 			newRepo, err := board.NewRepositoryForBoardWithStorage(m.baseDir, msg.active, m.repo.StorageRoot())
@@ -296,24 +413,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.repo = newRepo
 			m.loading = true
-			return m.withInFlight(func(ctx context.Context) tea.Cmd {
+			next, cmd := m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return loadStateCmdContext(ctx, m.repo)
 			})
+			if previewCmd != nil {
+				return next, tea.Batch(cmd, previewCmd)
+			}
+			return next, cmd
 		}
-		return m, nil
+		return m, previewCmd
 	case boardActionMsg:
 		m = m.cancelInFlight()
 		m.boards = msg.boards
 		m.activeBoard = msg.active
 		m.boardIndex = clampBoardIndex(m.boards, m.boardIndex, m.activeBoard)
+		previewCmd := m.loadBoardPreviewCmd()
 		returnToBoard := msg.returnToBoard || m.boardCommandReturn
 		if returnToBoard {
 			m.screen = screenBoard
-			if m.sidebarWidth() > 0 && m.boardCommandReturn {
+			if (m.sidebarWidth() > 0 || (m.width > 0 && m.width < 90)) && m.boardCommandReturn {
 				m.boardFocus = focusBoards
 			}
 		}
 		m.boardCommandReturn = false
+		m.consumePendingSuccessToast()
 		if msg.reloadTasks {
 			if m.repo == nil {
 				m.err = fmt.Errorf("tui: repository unavailable")
@@ -326,19 +449,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.repo = newRepo
 			m.loading = true
-			return m.withInFlight(func(ctx context.Context) tea.Cmd {
+			next, cmd := m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return loadStateCmdContext(ctx, m.repo)
 			})
+			if previewCmd != nil {
+				return next, tea.Batch(cmd, previewCmd)
+			}
+			return next, cmd
 		}
+		return m, previewCmd
+	case boardPreviewMsg:
+		if msg.preview.BoardID != m.selectedBoardID() {
+			return m, nil
+		}
+		m.boardPreviewLoading = false
+		if strings.TrimSpace(msg.preview.BoardName) == "" {
+			msg.preview.BoardName = m.boardPreview.BoardName
+		}
+		msg.preview.Archived = m.boardPreview.Archived
+		if strings.TrimSpace(msg.preview.Created) == "" {
+			msg.preview.Created = m.boardPreview.Created
+		}
+		m.boardPreview = msg.preview
 		return m, nil
 	case statusUpdatedMsg:
 		m = m.cancelInFlight()
 		m = m.applyStatusUpdate(msg.id, msg.status)
+		m.pushSuccessToast(fmt.Sprintf("Task %s moved to %s", msg.id, msg.status))
 		return m, nil
 	case wikiStateMsg:
 		m = m.cancelInFlight()
 		m.wikiNav = msg.nav
 		m.wikiPages = msg.pages
+		m.wikiLoaded = true
 		m.applyWikiFilters()
 		m.loading = false
 		m.loadingMessage = ""
@@ -352,14 +495,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadingMessage = ""
 		if msg.status != "" {
 			m.wikiStatus = msg.status
+			m.pushSuccessToast(msg.status)
 		} else if msg.path != "" {
 			m.wikiStatus = fmt.Sprintf("Exported to %s", msg.path)
+			m.pushSuccessToast(m.wikiStatus)
 		}
 		return m, nil
 	case adrStateMsg:
 		m = m.cancelInFlight()
 		m.adrStatusColumns = msg.columns
 		m.adrColumns = buildADRColumns(msg.columns, msg.adrs)
+		m.adrLoaded = true
 		m.loading = false
 		m.loadingMessage = ""
 		if m.adrActive >= len(m.adrColumns) {
@@ -375,6 +521,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case adrStatusUpdatedMsg:
 		m = m.cancelInFlight()
 		m = m.applyADRStatusUpdate(msg.id, msg.status)
+		m.pushSuccessToast(fmt.Sprintf("ADR %s moved to %s", adr.FormatID(msg.id), msg.status))
 		return m, nil
 	case adrCreatedMsg:
 		m = m.cancelInFlight()
@@ -382,6 +529,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.loadingMessage = "Opening editor..."
 		m.screen = screenADR
+		m.pushSuccessToast(fmt.Sprintf("Created %s", adr.FormatID(msg.record.ID)))
 		return m, openADREditorCmd(m.adrRoot(), msg.record.FilePath, m.editor)
 	case errMsg:
 		m = m.cancelInFlight()
@@ -390,7 +538,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// in-flight operations (e.g., when refreshing with Ctrl+R/F5)
 		if msg.err != nil && msg.err != context.Canceled {
 			m.err = msg.err
+			m.pushErrorToast(msg.err.Error())
 		}
+		m.pendingSuccessToast = ""
 		m.loading = false
 		m.loadingMessage = ""
 		return m, nil
@@ -398,6 +548,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.cancelInFlight()
 		m.archived = msg.tasks
 		m.archiveIndex = clampIndex(m.archiveIndex, len(m.archived))
+		m.consumePendingSuccessToast()
 		if msg.reloadTasks {
 			m.loading = true
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
@@ -411,6 +562,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if target, ok := tabFromKey(msg, m.screen); ok {
+		return m.switchToTab(target)
+	}
+
 	switch m.screen {
 	case screenBoardActions:
 		return m.handleBoardActionsKey(msg)
@@ -418,6 +573,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleBoardEditKey(msg)
 	case screenBoardDetail:
 		return m.handleBoardDetailKey(msg)
+	case screenBoardFilter:
+		return m.handleBoardFilterKey(msg)
+	case screenBoardFilterMenu:
+		return m.handleBoardFilterMenuKey(msg)
+	case screenBoardSortMenu:
+		return m.handleBoardSortMenuKey(msg)
 	case screenConfirm:
 		return m.handleConfirmKey(msg)
 	case screenTaskActions:
@@ -453,7 +614,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 	}
 
-	if m.boardFocus == focusBoards && m.sidebarWidth() > 0 {
+	boardListVisible := m.boardFocus == focusBoards && (m.sidebarWidth() > 0 || (m.width > 0 && m.width < 90))
+	if boardListVisible {
 		switch normalizedKey(msg) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -463,29 +625,32 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "ctrl+r", "f5":
 			return m.startRefresh()
 		case "w":
-			m.screen = screenWiki
-			m.loading = true
-			m.loadingMessage = "Loading wiki..."
-			return m.withInFlight(func(ctx context.Context) tea.Cmd {
-				return loadWikiCmdContext(ctx, m.wikiRoot())
-			})
+			return m.switchToTab(tabWiki)
 		case "d":
-			m.screen = screenADR
-			m.loading = true
-			m.loadingMessage = "Loading ADRs..."
-			return m.withInFlight(func(ctx context.Context) tea.Cmd {
-				return loadADRCmdContext(ctx, m.adrRoot())
-			})
+			return m.switchToTab(tabADR)
 		case "j":
 			m.boardIndex++
 			m.boardIndex = clampIndex(m.boardIndex, len(m.boards))
-			return m, nil
+			return m, m.loadBoardPreviewCmd()
 		case "k":
 			m.boardIndex--
 			m.boardIndex = clampIndex(m.boardIndex, len(m.boards))
-			return m, nil
-		case "enter", "u":
+			return m, m.loadBoardPreviewCmd()
+		case "enter":
 			if board, ok := m.selectedBoard(); ok {
+				m.boardFocus = focusKanban
+				if board.ID == m.activeBoard {
+					return m, nil
+				}
+				m.pendingSuccessToast = fmt.Sprintf("Opened board %s", board.ID)
+				return m.withInFlight(func(ctx context.Context) tea.Cmd {
+					return boardUseCmdContext(ctx, m.boardRepo, board.ID)
+				})
+			}
+			return m, nil
+		case "u":
+			if board, ok := m.selectedBoard(); ok {
+				m.pendingSuccessToast = fmt.Sprintf("Opened board %s", board.ID)
 				return m.withInFlight(func(ctx context.Context) tea.Cmd {
 					return boardUseCmdContext(ctx, m.boardRepo, board.ID)
 				})
@@ -529,56 +694,66 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.String() == "M" {
+		if !m.canMoveSelectedTaskBack() {
+			return m, nil
+		}
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return m.moveSelectedTaskBackCmdContext(ctx)
 		})
+	}
+	if msg.String() == "L" {
+		m.toggleBoardTaskView()
+		return m, nil
 	}
 	switch normalizedKey(msg) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "tab":
-		if m.sidebarWidth() > 0 {
+		if m.sidebarWidth() > 0 || (m.width > 0 && m.width < 90) {
 			m.boardFocus = focusBoards
 			m.boardIndex = clampBoardIndex(m.boards, m.boardIndex, m.activeBoard)
-			return m, nil
+			return m, m.loadBoardPreviewCmd()
 		}
 		return m, nil
 	case "b":
-		if m.sidebarWidth() > 0 {
+		if m.sidebarWidth() > 0 || (m.width > 0 && m.width < 90) {
 			m.boardFocus = focusBoards
 			m.boardIndex = clampBoardIndex(m.boards, m.boardIndex, m.activeBoard)
+			return m, m.loadBoardPreviewCmd()
 		}
 		return m, nil
 	case "ctrl+r", "f5":
 		return m.startRefresh()
 	case "w":
-		m.screen = screenWiki
-		m.loading = true
-		m.loadingMessage = "Loading wiki..."
-		return m.withInFlight(func(ctx context.Context) tea.Cmd {
-			return loadWikiCmdContext(ctx, m.wikiRoot())
-		})
+		return m.switchToTab(tabWiki)
 	case "d":
-		m.screen = screenADR
-		m.loading = true
-		m.loadingMessage = "Loading ADRs..."
-		return m.withInFlight(func(ctx context.Context) tea.Cmd {
-			return loadADRCmdContext(ctx, m.adrRoot())
-		})
+		return m.switchToTab(tabADR)
 	case "h":
+		if m.boardUsesListView() {
+			return m, nil
+		}
 		if m.active > 0 {
 			m.active--
 		}
 		return m, nil
 	case "l":
+		if m.boardUsesListView() {
+			return m, nil
+		}
 		if m.active < len(m.columns)-1 {
 			m.active++
 		}
 		return m, nil
 	case "j":
+		if m.boardUsesListView() {
+			return m.moveListSelection(1), nil
+		}
 		m = m.moveSelection(1)
 		return m, nil
 	case "k":
+		if m.boardUsesListView() {
+			return m.moveListSelection(-1), nil
+		}
 		m = m.moveSelection(-1)
 		return m, nil
 	case "enter", "i":
@@ -588,6 +763,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "m":
+		if !m.canMoveSelectedTaskForward() {
+			return m, nil
+		}
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return m.moveSelectedTaskCmdContext(ctx)
 		})
@@ -603,6 +781,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return loadArchiveCmdContext(ctx, m.repo)
 		})
+	case "f":
+		m.screen = screenBoardFilterMenu
+		m.boardListAction = 0
+		return m, nil
+	case "o":
+		if !m.boardUsesListView() {
+			return m, nil
+		}
+		m.screen = screenBoardSortMenu
+		m.boardListAction = 0
+		return m, nil
 	case "a":
 		status := ""
 		if len(m.columns) > 0 {
@@ -615,6 +804,85 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.taskField = 0
 		m.screen = screenTaskCreate
 		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m Model) handleBoardFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.screen = screenBoard
+		m.boardFilterInput = ""
+		return m, nil
+	case tea.KeyEnter:
+		input := strings.TrimSpace(m.boardFilterInput)
+		switch m.boardFilterMode {
+		case boardListFilterStatus:
+			m.boardFilterStatus = input
+		case boardListFilterTitle:
+			m.boardFilterTitle = input
+		case boardListFilterTags:
+			m.boardFilterTags = parseFilterTags(input)
+		}
+		m.boardFilterInput = ""
+		m.screen = screenBoard
+		return m, nil
+	case tea.KeyBackspace, tea.KeyDelete:
+		if len(m.boardFilterInput) > 0 {
+			m.boardFilterInput = m.boardFilterInput[:len(m.boardFilterInput)-1]
+		}
+		return m, nil
+	case tea.KeySpace:
+		m.boardFilterInput += " "
+		return m, nil
+	default:
+		if msg.Type == tea.KeyRunes {
+			m.boardFilterInput += string(msg.Runes)
+		}
+		return m, nil
+	}
+}
+
+func (m Model) handleBoardFilterMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch normalizedKey(msg) {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc":
+		m.screen = screenBoard
+		return m, nil
+	case "j":
+		m.boardListAction++
+		m.boardListAction = clampIndex(m.boardListAction, len(boardFilterMenuItems()))
+		return m, nil
+	case "k":
+		m.boardListAction--
+		m.boardListAction = clampIndex(m.boardListAction, len(boardFilterMenuItems()))
+		return m, nil
+	case "enter":
+		return m.handleBoardFilterMenuSelection(boardFilterMenuItems())
+	default:
+		return m, nil
+	}
+}
+
+func (m Model) handleBoardSortMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch normalizedKey(msg) {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc":
+		m.screen = screenBoard
+		return m, nil
+	case "j":
+		m.boardListAction++
+		m.boardListAction = clampIndex(m.boardListAction, len(boardSortMenuItems()))
+		return m, nil
+	case "k":
+		m.boardListAction--
+		m.boardListAction = clampIndex(m.boardListAction, len(boardSortMenuItems()))
+		return m, nil
+	case "enter":
+		return m.handleBoardSortMenuSelection(boardSortMenuItems())
 	default:
 		return m, nil
 	}
@@ -638,6 +906,10 @@ type boardActionMsg struct {
 	active        string
 	reloadTasks   bool
 	returnToBoard bool
+}
+
+type boardPreviewMsg struct {
+	preview boardPreviewData
 }
 
 type statusUpdatedMsg struct {
@@ -716,6 +988,69 @@ func loadBoardsCmdContext(ctx context.Context, repo *board.BoardRepository) tea.
 			return errMsg{err: err}
 		}
 		return boardStateMsg{boards: boards, active: active}
+	}
+}
+
+func loadBoardPreviewCmdContext(ctx context.Context, baseDir, storageRoot, boardID string) tea.Cmd {
+	return func() tea.Msg {
+		trimmedID := strings.TrimSpace(boardID)
+		preview := boardPreviewData{
+			BoardID: trimmedID,
+		}
+		if trimmedID == "" {
+			return boardPreviewMsg{preview: preview}
+		}
+		repo, err := board.NewRepositoryForBoardWithStorage(baseDir, trimmedID, storageRoot)
+		if err != nil {
+			preview.Error = err.Error()
+			return boardPreviewMsg{preview: preview}
+		}
+		config, err := repo.LoadConfigContext(ctx)
+		if err != nil {
+			preview.Error = err.Error()
+			return boardPreviewMsg{preview: preview}
+		}
+		tasks, err := repo.GetAllTasksContext(ctx)
+		if err != nil {
+			preview.Error = err.Error()
+			return boardPreviewMsg{preview: preview}
+		}
+		archived, err := repo.ListArchivedTasksContext(ctx)
+		if err != nil {
+			preview.Error = err.Error()
+			return boardPreviewMsg{preview: preview}
+		}
+
+		total := len(tasks)
+		doing := 0
+		done := 0
+		lastActivity := ""
+		for _, task := range tasks {
+			key := strings.ToLower(strings.TrimSpace(task.Status))
+			switch key {
+			case "doing", "in-progress", "in_progress":
+				doing++
+			case "done":
+				done++
+			}
+			created := task.Created.Time
+			if !created.IsZero() && (lastActivity == "" || created.Format("2006-01-02") > lastActivity) {
+				lastActivity = created.Format("2006-01-02")
+			}
+		}
+		if lastActivity == "" {
+			lastActivity = "n/a"
+		}
+
+		preview.Total = total
+		preview.Open = total - done
+		preview.Doing = doing
+		preview.Done = done
+		preview.ArchivedTasks = len(archived)
+		preview.LastActivity = lastActivity
+		preview.Context = config.Context
+		preview.Loaded = true
+		return boardPreviewMsg{preview: preview}
 	}
 }
 
@@ -972,6 +1307,228 @@ func (m Model) moveSelection(delta int) Model {
 	return m
 }
 
+type listTaskRef struct {
+	ColumnIndex int
+	TaskIndex   int
+}
+
+type listTaskEntry struct {
+	Ref  listTaskRef
+	Task board.Task
+}
+
+func (m Model) boardTaskRefByID() map[string]listTaskRef {
+	refs := make(map[string]listTaskRef)
+	for columnIndex, column := range m.columns {
+		for taskIndex, task := range column.Tasks {
+			refs[task.ID] = listTaskRef{
+				ColumnIndex: columnIndex,
+				TaskIndex:   taskIndex,
+			}
+		}
+	}
+	return refs
+}
+
+func (m Model) boardListEntries() []listTaskEntry {
+	allTasks := make([]board.Task, 0)
+	for _, column := range m.columns {
+		allTasks = append(allTasks, column.Tasks...)
+	}
+	if len(allTasks) == 0 {
+		return nil
+	}
+
+	opts := m.boardListOptions()
+	if strings.EqualFold(opts.SortBy, "readiness") || strings.TrimSpace(opts.SortBy) == "" {
+		opts.SortBy = ""
+		allTasks = board.FilterAndSortTasks(allTasks, opts)
+		sortTasksByReadiness(allTasks, buildTaskIndex(m.columns))
+	} else {
+		allTasks = board.FilterAndSortTasks(allTasks, opts)
+	}
+
+	refByID := m.boardTaskRefByID()
+	entries := make([]listTaskEntry, 0, len(allTasks))
+	for _, task := range allTasks {
+		ref, ok := refByID[task.ID]
+		if !ok {
+			continue
+		}
+		entries = append(entries, listTaskEntry{Ref: ref, Task: task})
+	}
+	return entries
+}
+
+func (m Model) listSelectionIndex(entries []listTaskEntry) int {
+	for i, entry := range entries {
+		ref := entry.Ref
+		if ref.ColumnIndex == m.active && ref.TaskIndex == m.columns[ref.ColumnIndex].Selected {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) moveListSelection(delta int) Model {
+	entries := m.boardListEntries()
+	if len(entries) == 0 {
+		return m
+	}
+	current := m.listSelectionIndex(entries)
+	target := clampIndex(current+delta, len(entries))
+	ref := entries[target].Ref
+	m.active = ref.ColumnIndex
+	m.columns[ref.ColumnIndex].Selected = ref.TaskIndex
+	return m
+}
+
+func (m Model) boardUsesListView() bool {
+	return m.boardListView
+}
+
+func (m Model) boardListOptions() board.ListOptions {
+	sortBy := strings.TrimSpace(m.boardSortBy)
+	if sortBy == "" {
+		sortBy = "readiness"
+	}
+	return board.ListOptions{
+		Status:  strings.TrimSpace(m.boardFilterStatus),
+		Title:   strings.TrimSpace(m.boardFilterTitle),
+		Tags:    m.boardFilterTags,
+		TagMode: "any",
+		SortBy:  sortBy,
+		Desc:    m.boardSortDesc,
+	}
+}
+
+func (m *Model) toggleBoardTaskView() {
+	if m.boardUsesListView() {
+		m.boardListView = false
+		m.boardForceKanban = true
+		return
+	}
+	m.boardListView = true
+	m.boardForceKanban = false
+	entries := m.boardListEntries()
+	if len(entries) == 0 {
+		return
+	}
+	ref := entries[0].Ref
+	m.active = ref.ColumnIndex
+	m.columns[ref.ColumnIndex].Selected = ref.TaskIndex
+}
+
+type boardFilterMenuKind int
+
+const (
+	boardFilterMenuStatus boardFilterMenuKind = iota
+	boardFilterMenuTitle
+	boardFilterMenuTags
+	boardFilterMenuClear
+	boardFilterMenuCancel
+)
+
+type boardFilterMenuItem struct {
+	label string
+	kind  boardFilterMenuKind
+}
+
+func boardFilterMenuItems() []boardFilterMenuItem {
+	return []boardFilterMenuItem{
+		{label: "status filter", kind: boardFilterMenuStatus},
+		{label: "title filter", kind: boardFilterMenuTitle},
+		{label: "tag filter", kind: boardFilterMenuTags},
+		{label: "clear filters", kind: boardFilterMenuClear},
+		{label: "cancel", kind: boardFilterMenuCancel},
+	}
+}
+
+func (m Model) handleBoardFilterMenuSelection(items []boardFilterMenuItem) (tea.Model, tea.Cmd) {
+	if len(items) == 0 || m.boardListAction < 0 || m.boardListAction >= len(items) {
+		m.screen = screenBoard
+		return m, nil
+	}
+	item := items[m.boardListAction]
+	switch item.kind {
+	case boardFilterMenuStatus:
+		m.screen = screenBoardFilter
+		m.boardFilterMode = boardListFilterStatus
+		m.boardFilterInput = m.boardFilterStatus
+	case boardFilterMenuTitle:
+		m.screen = screenBoardFilter
+		m.boardFilterMode = boardListFilterTitle
+		m.boardFilterInput = m.boardFilterTitle
+	case boardFilterMenuTags:
+		m.screen = screenBoardFilter
+		m.boardFilterMode = boardListFilterTags
+		m.boardFilterInput = strings.Join(m.boardFilterTags, ", ")
+	case boardFilterMenuClear:
+		m.boardFilterStatus = ""
+		m.boardFilterTitle = ""
+		m.boardFilterTags = nil
+		m.screen = screenBoard
+	default:
+		m.screen = screenBoard
+	}
+	return m, nil
+}
+
+type boardSortMenuKind int
+
+const (
+	boardSortMenuReadiness boardSortMenuKind = iota
+	boardSortMenuStatus
+	boardSortMenuCreated
+	boardSortMenuTitle
+	boardSortMenuPriority
+	boardSortMenuToggleDirection
+	boardSortMenuCancel
+)
+
+type boardSortMenuItem struct {
+	label string
+	kind  boardSortMenuKind
+}
+
+func boardSortMenuItems() []boardSortMenuItem {
+	return []boardSortMenuItem{
+		{label: "sort by readiness (default)", kind: boardSortMenuReadiness},
+		{label: "sort by status", kind: boardSortMenuStatus},
+		{label: "sort by created", kind: boardSortMenuCreated},
+		{label: "sort by title", kind: boardSortMenuTitle},
+		{label: "sort by priority", kind: boardSortMenuPriority},
+		{label: "toggle asc/desc", kind: boardSortMenuToggleDirection},
+		{label: "cancel", kind: boardSortMenuCancel},
+	}
+}
+
+func (m Model) handleBoardSortMenuSelection(items []boardSortMenuItem) (tea.Model, tea.Cmd) {
+	if len(items) == 0 || m.boardListAction < 0 || m.boardListAction >= len(items) {
+		m.screen = screenBoard
+		return m, nil
+	}
+	item := items[m.boardListAction]
+	switch item.kind {
+	case boardSortMenuReadiness:
+		m.boardSortBy = "readiness"
+		m.boardSortDesc = false
+	case boardSortMenuStatus:
+		m.boardSortBy = "status"
+	case boardSortMenuCreated:
+		m.boardSortBy = "created"
+	case boardSortMenuTitle:
+		m.boardSortBy = "title"
+	case boardSortMenuPriority:
+		m.boardSortBy = "priority"
+	case boardSortMenuToggleDirection:
+		m.boardSortDesc = !m.boardSortDesc
+	default:
+	}
+	m.screen = screenBoard
+	return m, nil
+}
+
 func (m Model) moveSelectedTaskCmdContext(ctx context.Context) tea.Cmd {
 	if len(m.columns) == 0 {
 		return nil
@@ -1012,6 +1569,14 @@ func (m Model) moveSelectedTaskBackCmdContext(ctx context.Context) tea.Cmd {
 	return updateStatusCmdContext(ctx, m.repo, task.ID, prevStatus)
 }
 
+func (m Model) canMoveSelectedTaskForward() bool {
+	return m.currentTaskExists() && m.active >= 0 && m.active < len(m.columns)-1
+}
+
+func (m Model) canMoveSelectedTaskBack() bool {
+	return m.currentTaskExists() && m.active > 0 && m.active < len(m.columns)
+}
+
 func (m Model) handleBoardActionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch normalizedKey(msg) {
 	case "ctrl+c", "q":
@@ -1050,6 +1615,7 @@ func (m Model) handleBoardActionSelection() (tea.Model, tea.Cmd) {
 	switch boardActionItems()[m.boardAction] {
 	case "use":
 		m.boardActionFromBoard = false
+		m.pendingSuccessToast = fmt.Sprintf("Opened board %s", board.ID)
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return boardUseCmdContext(ctx, m.boardRepo, board.ID)
 		})
@@ -1134,10 +1700,12 @@ func (m Model) handleBoardEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.boardEditFromBoard = false
 		if m.editMode == editCreate {
+			m.pendingSuccessToast = fmt.Sprintf("Created board %s", name)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return boardCreateCmdContext(ctx, m.boardRepo, name)
 			})
 		}
+		m.pendingSuccessToast = fmt.Sprintf("Renamed board to %s", name)
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return boardRenameCmdContext(ctx, m.boardRepo, m.editBoardID, name)
 		})
@@ -1205,6 +1773,7 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.boardFocus = focusBoards
 			}
 			m.confirmFromBoard = false
+			m.pendingSuccessToast = fmt.Sprintf("Archived board %s", m.confirmBoard)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return boardArchiveCmdContext(ctx, m.boardRepo, m.confirmBoard)
 			})
@@ -1214,21 +1783,25 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.boardFocus = focusBoards
 			}
 			m.confirmFromBoard = false
+			m.pendingSuccessToast = fmt.Sprintf("Deleted board %s", m.confirmBoard)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return boardDeleteCmdContext(ctx, m.boardRepo, m.confirmBoard)
 			})
 		case confirmArchiveTask:
 			m.screen = screenBoard
+			m.pendingSuccessToast = fmt.Sprintf("Archived task %s", m.confirmTask)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskArchiveCmdContext(ctx, m.repo, m.confirmTask)
 			})
 		case confirmDeleteTask:
 			m.screen = screenBoard
+			m.pendingSuccessToast = fmt.Sprintf("Deleted task %s", m.confirmTask)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskDeleteCmdContext(ctx, m.repo, m.confirmTask)
 			})
 		case confirmDeleteADR:
 			m.screen = screenADR
+			m.pendingSuccessToast = fmt.Sprintf("Deleted ADR %s", adr.FormatID(m.confirmADR))
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return deleteADRCmdContext(ctx, m.adrRoot(), m.confirmADR)
 			})
@@ -1280,6 +1853,40 @@ func (m Model) selectedBoard() (board.Board, bool) {
 		return board.Board{}, false
 	}
 	return m.boards[m.boardIndex], true
+}
+
+func (m Model) selectedBoardID() string {
+	selected, ok := m.selectedBoard()
+	if !ok {
+		return ""
+	}
+	return selected.ID
+}
+
+func (m *Model) loadBoardPreviewCmd() tea.Cmd {
+	selected, ok := m.selectedBoard()
+	if !ok {
+		m.boardPreview = boardPreviewData{}
+		m.boardPreviewLoading = false
+		return nil
+	}
+	preview := boardPreviewData{
+		BoardID:   selected.ID,
+		BoardName: selected.Name,
+		Archived:  selected.Archived,
+	}
+	if !selected.Created.IsZero() {
+		preview.Created = selected.Created.Format("2006-01-02")
+	}
+	m.boardPreview = preview
+	m.boardPreviewLoading = true
+	if m.repo == nil {
+		m.boardPreviewLoading = false
+		preview.Error = "repository unavailable"
+		m.boardPreview = preview
+		return nil
+	}
+	return loadBoardPreviewCmdContext(context.Background(), m.baseDir, m.repo.StorageRoot(), selected.ID)
 }
 
 func clampBoardIndex(boards []board.Board, current int, active string) int {
@@ -1426,7 +2033,14 @@ func (m Model) handleTaskDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEsc:
 		m.screen = screenBoard
 		return m, nil
-	case tea.KeyTab:
+	case tea.KeyUp:
+		if m.detailField == 0 {
+			m.detailField = detailFieldCount() - 1
+		} else {
+			m.detailField--
+		}
+		return m, nil
+	case tea.KeyDown:
 		m.detailField = (m.detailField + 1) % detailFieldCount()
 		return m, nil
 	case tea.KeyEnter:
@@ -1571,14 +2185,17 @@ func (m Model) handleTaskEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if input == "" {
 				return m, nil
 			}
+			m.pendingSuccessToast = fmt.Sprintf("Updated title for %s", task.ID)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskUpdateTitleCmdContext(ctx, m.repo, task.ID, input)
 			})
 		case editTags:
+			m.pendingSuccessToast = fmt.Sprintf("Updated tags for %s", task.ID)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskUpdateTagsCmdContext(ctx, m.repo, task.ID, board.ParseTags(input))
 			})
 		case editDescription:
+			m.pendingSuccessToast = fmt.Sprintf("Updated description for %s", task.ID)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskUpdateContentCmdContext(ctx, m.repo, task.ID, input)
 			})
@@ -1589,6 +2206,7 @@ func (m Model) handleTaskEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return errMsg{err: fmt.Errorf("tui: invalid priority %q", input)}
 				}
 			}
+			m.pendingSuccessToast = fmt.Sprintf("Updated priority for %s", task.ID)
 			return m.withInFlight(func(ctx context.Context) tea.Cmd {
 				return taskUpdatePriorityCmdContext(ctx, m.repo, task.ID, value)
 			})
@@ -1649,6 +2267,7 @@ func (m Model) handleArchiveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		task := m.archived[m.archiveIndex]
+		m.pendingSuccessToast = fmt.Sprintf("Restored task %s", task.ID)
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return restoreArchiveCmdContext(ctx, m.repo, task.ID)
 		})
@@ -1673,6 +2292,126 @@ func normalizedKey(msg tea.KeyMsg) string {
 	}
 }
 
+func tabFromKey(msg tea.KeyMsg, current screen) (appTab, bool) {
+	switch normalizedKey(msg) {
+	case "ctrl+1":
+		return tabBoards, true
+	case "ctrl+2":
+		return tabWiki, true
+	case "ctrl+3":
+		return tabADR, true
+	case "alt+1", "f1":
+		return tabBoards, true
+	case "alt+2", "f2":
+		return tabWiki, true
+	case "alt+3", "f3":
+		return tabADR, true
+	case "1":
+		if !isTextEntryScreen(current) {
+			return tabBoards, true
+		}
+	case "2":
+		if !isTextEntryScreen(current) {
+			return tabWiki, true
+		}
+	case "3":
+		if !isTextEntryScreen(current) {
+			return tabADR, true
+		}
+	default:
+		return tabBoards, false
+	}
+	return tabBoards, false
+}
+
+func isTextEntryScreen(current screen) bool {
+	switch current {
+	case screenBoardEdit, screenBoardFilter, screenTaskCreate, screenTaskEdit, screenWikiFilter, screenADRCreate:
+		return true
+	default:
+		return false
+	}
+}
+
+func inferTabFromScreen(current screen, confirm confirmAction) appTab {
+	switch current {
+	case screenWiki, screenWikiActions, screenWikiFilter, screenWikiFilterMenu:
+		return tabWiki
+	case screenADR, screenADRActions, screenADRStatusPicker, screenADRCreate, screenADRDetail:
+		return tabADR
+	case screenConfirm:
+		if confirm == confirmDeleteADR {
+			return tabADR
+		}
+		return tabBoards
+	default:
+		return tabBoards
+	}
+}
+
+func (m *Model) rememberTabScreen(tab appTab) {
+	switch tab {
+	case tabWiki:
+		m.wikiTabScreen = m.screen
+	case tabADR:
+		m.adrTabScreen = m.screen
+	default:
+		m.boardTabScreen = m.screen
+	}
+}
+
+func (m Model) switchToTab(target appTab) (tea.Model, tea.Cmd) {
+	source := inferTabFromScreen(m.screen, m.confirmAction)
+	m.rememberTabScreen(source)
+	if target == source {
+		m.activeTab = source
+		return m, nil
+	}
+
+	m = m.cancelInFlight()
+	m.activeTab = target
+	m.loading = false
+	m.loadingMessage = ""
+	switch target {
+	case tabWiki:
+		if m.wikiTabScreen == 0 {
+			m.wikiTabScreen = screenWiki
+		}
+		m.screen = m.wikiTabScreen
+		if !m.wikiLoaded {
+			m.screen = screenWiki
+			m.wikiTabScreen = screenWiki
+			m.loading = true
+			m.loadingMessage = "Loading wiki..."
+			return m.withInFlight(func(ctx context.Context) tea.Cmd {
+				return loadWikiCmdContext(ctx, m.wikiRoot())
+			})
+		}
+		return m, nil
+	case tabADR:
+		if m.adrTabScreen == 0 {
+			m.adrTabScreen = screenADR
+		}
+		m.screen = m.adrTabScreen
+		if !m.adrLoaded {
+			m.screen = screenADR
+			m.adrTabScreen = screenADR
+			m.loading = true
+			m.loadingMessage = "Loading ADRs..."
+			return m.withInFlight(func(ctx context.Context) tea.Cmd {
+				return loadADRCmdContext(ctx, m.adrRoot())
+			})
+		}
+		return m, nil
+	default:
+		if inferTabFromScreen(m.boardTabScreen, m.confirmAction) != tabBoards {
+			m.boardTabScreen = screenBoard
+		}
+		m.screen = m.boardTabScreen
+		return m, nil
+	}
+}
+
 func (m Model) handleTaskCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -1689,6 +2428,7 @@ func (m Model) handleTaskCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = screenBoard
 		m.taskTitle = ""
 		m.taskTags = ""
+		m.pendingSuccessToast = fmt.Sprintf("Created task %s", title)
 		return m.withInFlight(func(ctx context.Context) tea.Cmd {
 			return taskCreateCmdContext(ctx, m.repo, title, status, tags, priority)
 		})

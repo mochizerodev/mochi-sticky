@@ -46,6 +46,7 @@ sections:
       order: 0
       pages:
         - preparing-a-release
+        - homebrew
         - versioning
         - distribution
         - release-notes-template
@@ -62,4 +63,5 @@ sections:
         - tui
         - wiki
         - mcp
+        - screenshots
         - use-cases

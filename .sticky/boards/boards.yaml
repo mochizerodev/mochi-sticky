@@ -1,4 +1,4 @@
-active: test-board
+active: default
 boards:
     - id: default
       name: Default
@@ -20,11 +20,6 @@ boards:
       path: boards/adr-improvement
       archived: false
       created: "2026-02-04"
-    - id: test-board
-      name: Test Board
-      path: boards/test-board
-      archived: true
-      created: "2026-02-15"
     - id: tui-v2
       name: TUI v2
       path: boards/tui-v2

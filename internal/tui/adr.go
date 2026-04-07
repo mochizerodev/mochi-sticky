@@ -212,6 +212,9 @@ func (m Model) currentADR() (adr.ADR, bool) {
 	if len(m.adrColumns) == 0 {
 		return adr.ADR{}, false
 	}
+	if m.adrActive < 0 || m.adrActive >= len(m.adrColumns) {
+		return adr.ADR{}, false
+	}
 	column := m.adrColumns[m.adrActive]
 	if len(column.ADRs) == 0 {
 		return adr.ADR{}, false
@@ -220,6 +223,28 @@ func (m Model) currentADR() (adr.ADR, bool) {
 		return adr.ADR{}, false
 	}
 	return column.ADRs[column.Selected], true
+}
+
+func (m Model) canMoveSelectedADRForward() bool {
+	if _, ok := m.currentADR(); !ok {
+		return false
+	}
+	if m.adrActive >= len(m.adrColumns)-1 {
+		return false
+	}
+	nextStatus := strings.TrimSpace(m.adrColumns[m.adrActive+1].Key)
+	return nextStatus != "" && nextStatus != "unknown"
+}
+
+func (m Model) canMoveSelectedADRBack() bool {
+	if _, ok := m.currentADR(); !ok {
+		return false
+	}
+	if m.adrActive <= 0 {
+		return false
+	}
+	prevStatus := strings.TrimSpace(m.adrColumns[m.adrActive-1].Key)
+	return prevStatus != "" && prevStatus != "unknown"
 }
 
 func clampADRSelection(column *adrColumnModel) {
@@ -358,8 +383,7 @@ func (m Model) handleADRKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc", "q", "b":
-		m.screen = screenBoard
-		return m, nil
+		return m.switchToTab(tabBoards)
 	case "ctrl+r", "f5":
 		m.captureADRSelection()
 		m.loading = true

@@ -49,7 +49,7 @@ Responsive behavior (explicit rules)
 Navigation & focus model
 - Global: `Ctrl+1` Boards tab, `Ctrl+2` Wiki tab, `Ctrl+3` ADR tab; `Ctrl+R` refresh; `/` search within the active tab; `Tab`/`Shift+Tab` move focus between panes; `Esc` closes overlay/modals; `q` backs out one level inside the current tab; `?` opens key hints.
 - Optional vim-like jumps (if no conflicts): `g b` Boards, `g w` Wiki, `g a` ADR (aliases for the tab switches).
-- Board list pane: ↑/↓ select, ENTER opens board summary, `A` add board, `U` unarchive, `D` delete (modal).
+- Board list pane: ↑/↓ select (updates the board info preview), `Enter` opens the board (tasks view), `N` new task (in selected board), `i` opens board info overlay on narrow terminals, `A` add board, `U` unarchive, `D` delete (modal).
 - Task pane: ↑/↓ select, ENTER opens task detail, `N` new, `E` edit, `S` status cycle, `M` move, `F` filter, `O` sort.
 - Wiki pane: `j/k` navigate, `Enter` open pager (less), `e` edit (editor), `/` or `f` filter menu, `c` clear filters, `x` actions, `E` export md, `P` export pdf, `Ctrl+R` refresh, `b/esc` back.
 - ADR pane: `h/l` columns, `j/k` select ADR, `i` detail, `m/M` move status, `a` add, `e` editor, `x` actions, `L` toggle list/kanban (proposed), `Ctrl+R` refresh, `b/esc` back.
@@ -61,21 +61,49 @@ Capability alignment (mochi-sticky today)
 - Activity: there is no built-in task timeline/history yet; any future “Activity” view requires new storage (history log) or derived file metadata. Mockups below avoid showing activity until implemented.
 - Filters: wiki filtering exists in the current TUI; task filtering/sorting UI is part of this UX rewrite scope (backed by existing `ListOptions` in the board package).
 
-ASCII mockups (proportional layout; collapses to 2/1 column on narrow terminals)
+ASCII mockups (proportional layout; collapses to 2/1 panes on narrow terminals)
 ```
 ╔═ Tabs: [Boards]  Wiki  ADRs ═════════════════════════════════════════════════════════════════╗
-║ Boards ▸ Team Ops ▸ Tasks ══════════════════════════════════════════════════════════════════║
-║ Boards (focus)          │ Tasks in "Team Ops"           │ Hints / Status                    ║
-║ › Team Ops   ●5/2/1     │  [Filter: status=open]        │ Ctrl+1/2/3 tabs  Tab focus  /     ║
-║   Platform   ●3/1/0     │  [Sort: priority ↓]           │ Ctrl+R refresh  ? help            ║
-║   Archived ▸            │ ────────────────────────────  │ Toast: “Task archived” ✓          ║
-║                         │  ▸ Improve onboarding         │                                    ║
-║                         │    Status: Doing  Pri: P1     │                                    ║
-║                         │  ○ Add SLA alerts             │                                    ║
-║                         │  ○ Clean test fixtures        │                                    ║
-║                         │                               │                                    ║
+║ Boards ▸ Boards ════════════════════════════════════════════════════════════════════════════║
+║ Boards (focus)              │ Board info (auto-preview on selection)  │ Hints / Status       ║
+║ › Team Ops     ●5/2/1       │ Name: Team Ops                          │ Ctrl+1/2/3 tabs  /   ║
+║   Platform     ●3/1/0       │ Owners: SRE, PM                          │ Tab focus  ? help     ║
+║   Personal     ●1/0/4       │ Tags: ops, oncall, ux                    │ Ctrl+R refresh        ║
+║   Archived ▸                │ Status: Active   Tasks: 8 (5/2/1)        │ Toast: “Board archived” ✓ ║
+║                             │ Last activity: 2026-02-13                │                       ║
+║                             │ Quick actions: [Enter] open  [N] new task │                       ║
+║                             │              [E] edit board  [A] archive  │                       ║
+║                             │              [U] restore  [D] delete      │                       ║
 ╠═════════════════════════╧═══════════════════════════════╧════════════════════════════════════╣
 ║ Status: Connected ▸ Sync OK           Size: 132x40           Esc: close overlay  q: back     ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Boards (90..119 cols): 2 panes (boards list + board info; hints move to footer)
+```
+╔═ Tabs: [Boards]  Wiki  ADRs ═════════════════════════════════════════════════════════════════╗
+║ Boards ▸ Boards ════════════════════════════════════════════════════════════════════════════║
+║ Boards (focus)              │ Board info (auto-preview on selection)                        ║
+║ › Team Ops     ●5/2/1       │ Name: Team Ops  •  Owners: SRE, PM                             ║
+║   Platform     ●3/1/0       │ Tags: ops, oncall, ux                                          ║
+║   Personal     ●1/0/4       │ Tasks: 8 (Todo 5 / Doing 2 / Done 1)                           ║
+║   Archived ▸                │ Last activity: 2026-02-13                                      ║
+╠═════════════════════════════╧════════════════════════════════════════════════════════════════╣
+║ [↑/↓] select  [Enter] open board  [i] info  [A] add  [/] search  [Tab] focus  [?] help      ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Boards (< 90 cols): 1 pane (board info via `i` overlay)
+```
+╔═ Tabs: [Boards]  Wiki  ADRs ═════════════════════════════════════════════════════════════════╗
+║ Boards ▸ Boards ════════════════════════════════════════════════════════════════════════════║
+║ Boards (focus)                                                                            ⟳ ║
+║ › Team Ops     ●5/2/1                                                                       ║
+║   Platform     ●3/1/0                                                                       ║
+║   Personal     ●1/0/4                                                                       ║
+║   Archived ▸                                                                            (i)  ║
+╠══════════════════════════════════════════════════════════════════════════════════════════════╣
+║ [↑/↓] select  [Enter] open  [i] board info  [/] search  [?] help                            ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
 ```
 
@@ -100,7 +128,7 @@ Wiki (in-app preview + external pager on Enter)
 
 Flow (how it feels to use)
 Boards tab:
-- Open `Boards` tab, select a board, land on the board summary with tasks shown as kanban columns (Todo/Doing/Done).
+- Open `Boards` tab, move through boards (board info preview updates as you move), press `Enter` to open the board summary with tasks shown as kanban columns (Todo/Doing/Done).
 - Navigate inside the kanban: arrows move within a column, left/right changes column focus; moving a ticket updates its status (and shows a toast).
 - Press `L` to toggle Kanban ↔ List view. List view is optimized for narrow terminals and fast scanning/sorting; it supports `S` (cycle status) and `M` (move with picker).
 - Enter opens task detail; edit is a modal that saves without losing your place in the kanban.
